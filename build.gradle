@@ -5,7 +5,7 @@ plugins {
 group = 'com.gokirlbankedxp'
 version = '0.0.1'
 
-def runeliteVersion = '1.10.17'
+def runeliteVersion = '1.12.7'
 
 sourceCompatibility = JavaVersion.VERSION_21
 targetCompatibility = JavaVersion.VERSION_21

@@ -1,9 +1,12 @@
 TODO.md
 .gradle
+gradle/
 .claude/
 src/test/
 .classpath
+build/
 .idea/
+gradlew*
 .project
 .settings/
 .vscode/
