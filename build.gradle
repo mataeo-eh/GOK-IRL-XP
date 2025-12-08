@@ -1,0 +1,41 @@
+plugins {
+    id 'java'
+}
+
+group = 'com.gokirlbankedxp'
+version = '0.0.1'
+
+def runeliteVersion = '1.10.17'
+
+sourceCompatibility = JavaVersion.VERSION_21
+targetCompatibility = JavaVersion.VERSION_21
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+}
+
+repositories {
+    mavenCentral()
+    maven {
+        url 'https://repo.runelite.net'
+    }
+}
+
+dependencies {
+    compileOnly "net.runelite:client:${runeliteVersion}"
+    compileOnly 'org.projectlombok:lombok:1.18.42'
+    implementation "jakarta.inject:jakarta.inject-api:1.0.3"
+    annotationProcessor 'org.projectlombok:lombok:1.18.42'
+
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.9.3'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.9.3'
+    testImplementation "net.runelite:client:${runeliteVersion}"
+    testImplementation 'org.mockito:mockito-core:4.11.0'
+    testImplementation 'org.mockito:mockito-inline:4.11.0'
+}
+
+test {
+    useJUnitPlatform()
+    jvmArgs '-Dnet.bytebuddy.experimental=true'
+}
