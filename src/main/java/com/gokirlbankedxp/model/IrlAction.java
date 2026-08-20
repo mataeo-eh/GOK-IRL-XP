@@ -14,6 +14,14 @@ public class IrlAction
 {
     private final UUID id;
     private final String name;
+    /** User-defined unit label used in the action editor and timer summaries. */
+    private final String unitName;
+    /** Exact timer interval represented by one unit. */
+    private final long secondsPerUnit;
+    /**
+     * Legacy field retained only so Gson can migrate actions saved by older
+     * versions, where units were restricted to the TimeUnit enum.
+     */
     private final TimeUnit timeUnit;
     private final long defaultXpPerUnit;
     private final Map<Skill, Long> skillMappings;
@@ -22,6 +30,8 @@ public class IrlAction
     private IrlAction(
         UUID id,
         String name,
+        String unitName,
+        long secondsPerUnit,
         TimeUnit timeUnit,
         long defaultXpPerUnit,
         Map<Skill, Long> skillMappings
@@ -29,6 +39,13 @@ public class IrlAction
     {
         this.id = id == null ? UUID.randomUUID() : id;
         this.name = name == null ? "" : name.trim();
+        String normalizedUnitName = unitName == null ? "" : unitName.trim();
+        this.unitName = normalizedUnitName.isEmpty() && timeUnit != null
+            ? timeUnit.getDisplayName()
+            : normalizedUnitName;
+        this.secondsPerUnit = secondsPerUnit > 0
+            ? secondsPerUnit
+            : timeUnit == null ? 0L : timeUnit.getSecondsPerUnit();
         this.timeUnit = timeUnit;
         this.defaultXpPerUnit = defaultXpPerUnit;
         this.skillMappings = Collections.unmodifiableMap(sanitizeMappings(skillMappings));
@@ -37,9 +54,30 @@ public class IrlAction
     public boolean isValid()
     {
         return !name.isEmpty()
-            && timeUnit != null
+            && !getUnitName().isEmpty()
+            && getSecondsPerUnit() > 0
             && defaultXpPerUnit > 0
             && !skillMappings.isEmpty();
+    }
+
+    /** Resolves legacy enum-backed actions even when Gson bypasses the constructor. */
+    public String getUnitName()
+    {
+        if (unitName != null && !unitName.trim().isEmpty())
+        {
+            return unitName.trim();
+        }
+        return timeUnit == null ? "" : timeUnit.getDisplayName();
+    }
+
+    /** Resolves legacy enum-backed actions even when Gson bypasses the constructor. */
+    public long getSecondsPerUnit()
+    {
+        if (secondsPerUnit > 0)
+        {
+            return secondsPerUnit;
+        }
+        return timeUnit == null ? 0L : timeUnit.getSecondsPerUnit();
     }
 
     public boolean hasSkillMapping(Skill skill)

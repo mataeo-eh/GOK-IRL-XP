@@ -4,7 +4,6 @@ import com.google.common.base.Strings;
 import com.google.inject.Provides;
 import com.gokirlbankedxp.service.IrlActionManager;
 import com.gokirlbankedxp.service.TimerManager;
-import com.gokirlbankedxp.ui.IrlActionsPanel;
 import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
@@ -40,8 +39,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 @PluginDescriptor(
-    name = "GOK IRL Banked XP",
-    description = "Track manually banked XP per skill, automatically depleting it as you train.",
+    name = "IRL XP",
+    description = "Turn real-world actions into banked RuneScape XP and track it as you train.",
     tags = {"banked", "experience", "irl", "xp"}
 )
 public class GokIrlBankedXpPlugin extends Plugin
@@ -55,7 +54,6 @@ public class GokIrlBankedXpPlugin extends Plugin
     private static final Skill[] TRACKABLE_SKILLS = Skill.values();
 
     private static final BufferedImage NAV_ICON = buildIcon();
-    private static final BufferedImage ACTIONS_ICON = buildActionsIcon();
 
     private final Object dataLock = new Object();
     private final Map<Skill, Long> storedXp = new EnumMap<>(Skill.class);
@@ -64,7 +62,6 @@ public class GokIrlBankedXpPlugin extends Plugin
 
     private volatile BankedXpSnapshot currentSnapshot = BankedXpSnapshot.empty();
     private NavigationButton navigationButton;
-    private NavigationButton actionsNavigationButton;
 
     @Inject
     private Client client;
@@ -88,13 +85,10 @@ public class GokIrlBankedXpPlugin extends Plugin
     private ClientToolbar clientToolbar;
 
     @Inject
-    private GokIrlBankedXpPanel panel;
+    private GokIrlXpPanel panel;
 
     @Inject
     private IrlActionManager irlActionManager;
-
-    @Inject
-    private IrlActionsPanel irlActionsPanel;
 
     @Inject
     private TimerManager timerManager;
@@ -117,16 +111,8 @@ public class GokIrlBankedXpPlugin extends Plugin
             .build();
         clientToolbar.addNavigation(navigationButton);
 
-        actionsNavigationButton = NavigationButton.builder()
-            .tooltip("IRL Actions")
-            .icon(ACTIONS_ICON)
-            .priority(6)
-            .panel(irlActionsPanel)
-            .build();
-        clientToolbar.addNavigation(actionsNavigationButton);
-
         irlActionManager.loadActions();
-        irlActionsPanel.refreshActionList();
+        panel.refreshActions();
         loadStoredXp();
         timerManager.startUp();
         clientThread.invokeLater(() -> {
@@ -138,6 +124,7 @@ public class GokIrlBankedXpPlugin extends Plugin
     @Override
     protected void shutDown()
     {
+        panel.stopUiUpdates();
         if (timerManager != null)
         {
             timerManager.shutDown();
@@ -149,12 +136,6 @@ public class GokIrlBankedXpPlugin extends Plugin
             clientToolbar.removeNavigation(navigationButton);
             navigationButton = null;
         }
-        if (actionsNavigationButton != null)
-        {
-            clientToolbar.removeNavigation(actionsNavigationButton);
-            actionsNavigationButton = null;
-        }
-
         synchronized (dataLock)
         {
             storedXp.clear();
@@ -483,20 +464,6 @@ public class GokIrlBankedXpPlugin extends Plugin
         graphics.fillRect(0, 0, 16, 16);
         graphics.setColor(Color.WHITE);
         graphics.drawString("XP", 2, 12);
-        graphics.dispose();
-
-        return image;
-    }
-
-    private static BufferedImage buildActionsIcon()
-    {
-        BufferedImage image = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D graphics = image.createGraphics();
-
-        graphics.setColor(new Color(0xFF6A5ACD, true));
-        graphics.fillRect(0, 0, 16, 16);
-        graphics.setColor(Color.WHITE);
-        graphics.drawString("A", 6, 12);
         graphics.dispose();
 
         return image;

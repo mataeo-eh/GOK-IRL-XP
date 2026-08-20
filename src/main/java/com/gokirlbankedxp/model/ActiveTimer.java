@@ -72,8 +72,8 @@ public class ActiveTimer
 
     public void pause(long nowMillis)
     {
+        accrueElapsed(nowMillis);
         this.paused = true;
-        this.lastTickMillis = nowMillis;
     }
 
     public void resume(long nowMillis)
@@ -82,16 +82,15 @@ public class ActiveTimer
         this.lastTickMillis = nowMillis;
     }
 
-    public void alignAwardedUnits(TimeUnit timeUnit)
+    public void alignAwardedUnits(long secondsPerUnit)
     {
-        long unitSeconds = timeUnit.getSecondsPerUnit();
-        if (unitSeconds <= 0)
+        if (secondsPerUnit <= 0)
         {
             this.awardedUnits = 0;
             return;
         }
 
-        this.awardedUnits = elapsedSeconds / unitSeconds;
+        this.awardedUnits = elapsedSeconds / secondsPerUnit;
     }
 
     public Map<Skill, Long> applyTick(long nowMillis, IrlAction action)
@@ -102,17 +101,13 @@ public class ActiveTimer
             return Collections.emptyMap();
         }
 
-        long deltaSeconds = lastTickMillis == 0
-            ? Math.max(0, nowMillis / 1000)
-            : Math.max(0, (nowMillis - lastTickMillis) / 1000);
-        lastTickMillis = nowMillis;
+        long deltaSeconds = accrueElapsed(nowMillis);
         if (deltaSeconds == 0)
         {
             return Collections.emptyMap();
         }
 
-        elapsedSeconds += deltaSeconds;
-        long unitSeconds = action.getTimeUnit().getSecondsPerUnit();
+        long unitSeconds = action.getSecondsPerUnit();
         if (unitSeconds <= 0)
         {
             return Collections.emptyMap();
@@ -137,6 +132,29 @@ public class ActiveTimer
             }
         }
         return xp;
+    }
+
+    /**
+     * Commits whole elapsed seconds while retaining any millisecond remainder.
+     * Advancing the anchor directly to {@code nowMillis} used to discard that
+     * remainder on every scheduler tick and caused long-running timers to drift.
+     */
+    private long accrueElapsed(long nowMillis)
+    {
+        if (lastTickMillis == 0)
+        {
+            lastTickMillis = nowMillis;
+            return 0L;
+        }
+
+        long deltaMillis = Math.max(0L, nowMillis - lastTickMillis);
+        long deltaSeconds = deltaMillis / 1000L;
+        if (deltaSeconds > 0)
+        {
+            elapsedSeconds += deltaSeconds;
+            lastTickMillis += deltaSeconds * 1000L;
+        }
+        return deltaSeconds;
     }
 
     public ActiveTimer copy()

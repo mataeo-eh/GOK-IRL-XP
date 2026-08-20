@@ -43,6 +43,17 @@ public interface GokIrlBankedXpConfig extends Config
     }
 
     @ConfigItem(
+        keyName = "irlActionUnitsJson",
+        name = "IRL action units",
+        description = "Serialized representation of user-created action units.",
+        hidden = true
+    )
+    default String irlActionUnitsJson()
+    {
+        return "{}";
+    }
+
+    @ConfigItem(
         keyName = "activeTimersJson",
         name = "Active timers",
         description = "Serialized representation of active IRL timers.",
@@ -64,4 +75,3 @@ public interface GokIrlBankedXpConfig extends Config
         return "";
     }
 }
-

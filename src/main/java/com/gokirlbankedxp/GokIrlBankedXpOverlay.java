@@ -39,7 +39,7 @@ class GokIrlBankedXpOverlay extends OverlayPanel
         {
             panelComponent.getChildren().add(
                 TitleComponent.builder()
-                    .text("IRL Banked XP")
+                    .text("IRL XP")
                     .color(graphics.getColor())
                     .build()
             );

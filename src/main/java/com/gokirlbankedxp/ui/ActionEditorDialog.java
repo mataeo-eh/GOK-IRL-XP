@@ -1,18 +1,15 @@
 package com.gokirlbankedxp.ui;
 
 import com.gokirlbankedxp.model.IrlAction;
-import com.gokirlbankedxp.model.TimeUnit;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.GridLayout;
 import java.awt.Window;
-import java.text.NumberFormat;
 import java.text.ParseException;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -35,25 +32,44 @@ import net.runelite.api.Skill;
 
 class ActionEditorDialog extends JDialog
 {
-    private static final Color ERROR_COLOR = new Color(0xFFCCCC);
+    private static final Color ERROR_COLOR = new Color(0x522B2D);
 
     private final JTextField nameField = new JTextField();
-    private final JComboBox<TimeUnit> timeUnitCombo = new JComboBox<>(TimeUnit.values());
-    private final JFormattedTextField defaultXpField = new JFormattedTextField(createPositiveLongFormatter());
+    private final JComboBox<String> unitCombo = new JComboBox<>();
+    private final JFormattedTextField secondsPerUnitField = new JFormattedTextField(IrlXpUi.positiveLongFormatter());
+    private final JFormattedTextField defaultXpField = new JFormattedTextField(IrlXpUi.positiveLongFormatter());
     private final JLabel errorLabel = new JLabel(" ");
     private final Map<Skill, SkillRow> skillRows = new LinkedHashMap<>();
+    private final Map<String, Long> savedUnits;
 
     private IrlAction resultAction;
     private final IrlAction existingAction;
 
-    ActionEditorDialog(Window owner, IrlAction existingAction)
+    ActionEditorDialog(Window owner, IrlAction existingAction, Map<String, Long> savedUnits)
     {
         super(owner, existingAction == null ? "New IRL Action" : "Edit IRL Action", ModalityType.APPLICATION_MODAL);
         this.existingAction = existingAction;
+        this.savedUnits = new LinkedHashMap<>(savedUnits);
+
+        // Editable input provides one deterministic path for either choosing a
+        // previously saved unit or typing a new one.
+        savedUnits.keySet().forEach(unitCombo::addItem);
+        unitCombo.setEditable(true);
+        unitCombo.setToolTipText("Type a new unit or select one you previously saved.");
+        if (unitCombo.getEditor().getEditorComponent() instanceof javax.swing.JComponent)
+        {
+            ((javax.swing.JComponent) unitCombo.getEditor().getEditorComponent())
+                .setToolTipText("Type a new unit or select one you previously saved.");
+        }
+        unitCombo.addActionListener(e -> populateSavedUnitDuration());
 
         setLayout(new BorderLayout(8, 8));
-        setPreferredSize(new Dimension(560, 640));
+        getContentPane().setBackground(IrlXpUi.BACKGROUND);
+        ((javax.swing.JComponent) getContentPane()).setBorder(
+            BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        setPreferredSize(new Dimension(520, 640));
         setResizable(true);
+        setDefaultCloseOperation(DISPOSE_ON_CLOSE);
 
         add(buildFormPanel(), BorderLayout.NORTH);
         add(buildSkillsPanel(), BorderLayout.CENTER);
@@ -65,7 +81,8 @@ class ActionEditorDialog extends JDialog
         }
         else
         {
-            timeUnitCombo.setSelectedItem(TimeUnit.MINUTES);
+            unitCombo.setSelectedItem(null);
+            secondsPerUnitField.setValue(60L);
             defaultXpField.setValue(50L);
         }
 
@@ -82,22 +99,35 @@ class ActionEditorDialog extends JDialog
 
     private JPanel buildFormPanel()
     {
-        JPanel panel = new JPanel(new GridLayout(0, 2, 8, 8));
-        panel.setBorder(BorderFactory.createEmptyBorder(8, 8, 0, 8));
+        JPanel panel = IrlXpUi.card(new BorderLayout(0, 10));
+        panel.add(IrlXpUi.sectionTitle(existingAction == null ? "Create an action" : "Edit action"), BorderLayout.NORTH);
 
-        panel.add(new JLabel("Action name"));
-        panel.add(nameField);
+        JPanel fields = new JPanel(new GridLayout(0, 2, 8, 8));
+        fields.setOpaque(false);
 
-        panel.add(new JLabel("Time unit"));
-        panel.add(timeUnitCombo);
+        IrlXpUi.styleField(nameField);
+        IrlXpUi.styleField(unitCombo);
+        IrlXpUi.styleField(secondsPerUnitField);
+        IrlXpUi.styleField(defaultXpField);
 
-        panel.add(new JLabel("Default XP per unit"));
+        fields.add(fieldLabel("Action name"));
+        fields.add(nameField);
+
+        fields.add(fieldLabel("Units"));
+        fields.add(unitCombo);
+
+        fields.add(fieldLabel("Seconds per unit"));
+        fields.add(secondsPerUnitField);
+
+        fields.add(fieldLabel("Default XP per unit"));
         defaultXpField.setValue(1L);
-        panel.add(defaultXpField);
+        fields.add(defaultXpField);
 
-        errorLabel.setForeground(Color.RED);
-        panel.add(new JLabel());
-        panel.add(errorLabel);
+        errorLabel.setForeground(IrlXpUi.DANGER);
+        fields.add(new JLabel());
+        fields.add(errorLabel);
+
+        panel.add(fields, BorderLayout.CENTER);
 
         return panel;
     }
@@ -106,10 +136,11 @@ class ActionEditorDialog extends JDialog
     {
         JPanel skillList = new JPanel();
         skillList.setLayout(new BoxLayout(skillList, BoxLayout.Y_AXIS));
+        skillList.setBackground(IrlXpUi.INPUT_BACKGROUND);
 
         for (Skill skill : Skill.values())
         {
-            SkillRow row = new SkillRow(skill, createPositiveLongFormatter());
+            SkillRow row = new SkillRow(skill, IrlXpUi.positiveLongFormatter());
             skillRows.put(skill, row);
             skillList.add(row.panel);
         }
@@ -117,20 +148,28 @@ class ActionEditorDialog extends JDialog
         skillList.add(Box.createVerticalGlue());
 
         JScrollPane scrollPane = new JScrollPane(skillList);
-        scrollPane.setBorder(BorderFactory.createTitledBorder("Skill mappings"));
+        scrollPane.setBorder(BorderFactory.createLineBorder(IrlXpUi.BORDER));
+        scrollPane.getViewport().setBackground(IrlXpUi.INPUT_BACKGROUND);
         scrollPane.getVerticalScrollBar().setUnitIncrement(12);
 
-        JPanel wrapper = new JPanel(new BorderLayout());
+        JPanel wrapper = IrlXpUi.card(new BorderLayout(0, 8));
+        JPanel heading = new JPanel(new BorderLayout());
+        heading.setOpaque(false);
+        heading.add(IrlXpUi.sectionTitle("Skill rewards"), BorderLayout.WEST);
+        heading.add(IrlXpUi.mutedLabel("Select one or more"), BorderLayout.EAST);
+        wrapper.add(heading, BorderLayout.NORTH);
         wrapper.add(scrollPane, BorderLayout.CENTER);
-        wrapper.setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
         return wrapper;
     }
 
     private JPanel buildButtonRow()
     {
         JPanel row = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 8));
+        row.setBackground(IrlXpUi.BACKGROUND);
         JButton cancel = new JButton("Cancel");
-        JButton ok = new JButton("OK");
+        JButton ok = new JButton(existingAction == null ? "CREATE ACTION" : "SAVE CHANGES");
+        IrlXpUi.styleSecondaryButton(cancel);
+        IrlXpUi.stylePrimaryButton(ok);
 
         cancel.addActionListener(e -> {
             resultAction = null;
@@ -169,10 +208,18 @@ class ActionEditorDialog extends JDialog
             return null;
         }
 
-        TimeUnit timeUnit = (TimeUnit) timeUnitCombo.getSelectedItem();
-        if (timeUnit == null)
+        Object unitValue = unitCombo.getEditor().getItem();
+        String unitName = unitValue == null ? "" : unitValue.toString().trim();
+        if (unitName.isEmpty())
         {
-            markInvalid(timeUnitCombo, "Time unit is required.");
+            markInvalid(unitCombo, "Unit is required.");
+            return null;
+        }
+
+        long secondsPerUnit = parseLong(secondsPerUnitField);
+        if (secondsPerUnit <= 0)
+        {
+            markInvalid(secondsPerUnitField, "Seconds per unit must be positive.");
             return null;
         }
 
@@ -205,7 +252,8 @@ class ActionEditorDialog extends JDialog
         return IrlAction.builder()
             .id(id)
             .name(name)
-            .timeUnit(timeUnit)
+            .unitName(unitName)
+            .secondsPerUnit(secondsPerUnit)
             .defaultXpPerUnit(defaultXp)
             .skillMappings(mappings)
             .build();
@@ -214,7 +262,8 @@ class ActionEditorDialog extends JDialog
     private void populateFromExisting(IrlAction action)
     {
         nameField.setText(action.getName());
-        timeUnitCombo.setSelectedItem(action.getTimeUnit());
+        unitCombo.setSelectedItem(action.getUnitName());
+        secondsPerUnitField.setValue(action.getSecondsPerUnit());
         defaultXpField.setValue(action.getDefaultXpPerUnit());
 
         Map<Skill, Long> mappings = action.getSkillMappings() == null
@@ -249,12 +298,30 @@ class ActionEditorDialog extends JDialog
         skillRows.values().forEach(row -> row.syncWithDefault(defaultXp));
     }
 
+    private void populateSavedUnitDuration()
+    {
+        Object selected = unitCombo.getSelectedItem();
+        if (selected == null)
+        {
+            return;
+        }
+
+        String selectedName = selected.toString().trim();
+        savedUnits.forEach((name, seconds) -> {
+            if (name.equalsIgnoreCase(selectedName))
+            {
+                secondsPerUnitField.setValue(seconds);
+            }
+        });
+    }
+
     private void clearValidationHighlights()
     {
         errorLabel.setText(" ");
-        nameField.setBackground(Color.WHITE);
-        defaultXpField.setBackground(Color.WHITE);
-        skillRows.values().forEach(row -> row.xpField.setBackground(Color.WHITE));
+        nameField.setBackground(IrlXpUi.INPUT_BACKGROUND);
+        secondsPerUnitField.setBackground(IrlXpUi.INPUT_BACKGROUND);
+        defaultXpField.setBackground(IrlXpUi.INPUT_BACKGROUND);
+        skillRows.values().forEach(row -> row.xpField.setBackground(IrlXpUi.INPUT_BACKGROUND));
     }
 
     private void markInvalid(javax.swing.JComponent component, String message)
@@ -269,15 +336,11 @@ class ActionEditorDialog extends JDialog
         errorLabel.setText(message);
     }
 
-    private NumberFormatter createPositiveLongFormatter()
+    private JLabel fieldLabel(String text)
     {
-        NumberFormat numberFormat = NumberFormat.getIntegerInstance(Locale.US);
-        numberFormat.setGroupingUsed(false);
-        NumberFormatter formatter = new NumberFormatter(numberFormat);
-        formatter.setAllowsInvalid(false);
-        formatter.setMinimum(1L);
-        formatter.setValueClass(Long.class);
-        return formatter;
+        JLabel label = new JLabel(text);
+        label.setForeground(IrlXpUi.MUTED_TEXT);
+        return label;
     }
 
     private long parseLong(JFormattedTextField field)
@@ -314,6 +377,11 @@ class ActionEditorDialog extends JDialog
 
             xpField.setColumns(7);
             useDefault.setSelected(true);
+            IrlXpUi.styleField(xpField);
+            skillCheck.setForeground(IrlXpUi.TEXT);
+            skillCheck.setOpaque(false);
+            useDefault.setForeground(IrlXpUi.MUTED_TEXT);
+            useDefault.setOpaque(false);
 
             skillCheck.addActionListener(e -> refreshEnabledState());
             useDefault.addActionListener(e -> {
@@ -328,6 +396,8 @@ class ActionEditorDialog extends JDialog
             panel.add(new JLabel("XP:"));
             panel.add(xpField);
             panel.add(useDefault);
+            panel.setBackground(IrlXpUi.INPUT_BACKGROUND);
+            panel.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, IrlXpUi.BORDER));
             panel.setAlignmentX(LEFT_ALIGNMENT);
             refreshEnabledState();
         }
@@ -362,7 +432,7 @@ class ActionEditorDialog extends JDialog
             xpField.setEnabled(selected && !useDefault.isSelected());
             if (!selected)
             {
-                xpField.setBackground(Color.WHITE);
+                xpField.setBackground(IrlXpUi.INPUT_BACKGROUND);
             }
         }
     }

@@ -4,7 +4,6 @@ import com.gokirlbankedxp.GokIrlBankedXpConfig;
 import com.gokirlbankedxp.GokIrlBankedXpPlugin;
 import com.gokirlbankedxp.model.ActiveTimer;
 import com.gokirlbankedxp.model.IrlAction;
-import com.gokirlbankedxp.model.TimeUnit;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonParseException;
@@ -102,7 +101,7 @@ public class TimerManager
         }
 
         ActiveTimer timer = ActiveTimer.start(actionId, timeSupplier.get());
-        timer.alignAwardedUnits(action.get().getTimeUnit());
+        timer.alignAwardedUnits(action.get().getSecondsPerUnit());
 
         synchronized (lock)
         {
@@ -148,6 +147,7 @@ public class TimerManager
             return false;
         }
 
+        Map<Skill, Long> earnedBeforePause = Collections.emptyMap();
         synchronized (lock)
         {
             ActiveTimer timer = activeTimers.get(timerId);
@@ -169,6 +169,13 @@ public class TimerManager
             long now = timeSupplier.get();
             if (paused)
             {
+                // Settle any whole units since the scheduler's last tick before
+                // freezing the timer, so a quick pause/stop cannot lose XP.
+                Optional<IrlAction> action = actionManager.getAction(timer.getActionId());
+                if (action.isPresent())
+                {
+                    earnedBeforePause = timer.applyTick(now, action.get());
+                }
                 timer.pause(now);
             }
             else
@@ -177,8 +184,10 @@ public class TimerManager
             }
 
             saveTimersLocked();
-            return true;
         }
+
+        earnedBeforePause.forEach((skill, amount) -> plugin.addTimerXp(skill, amount));
+        return true;
     }
 
     public List<ActiveTimer> getActiveTimers()
@@ -215,7 +224,7 @@ public class TimerManager
                     timer.getDisplayElapsedSeconds(now),
                     timer.isPaused(),
                     value.getSkillMappings(),
-                    value.getTimeUnit()
+                    value.getUnitName()
                 ));
             }
         }
@@ -310,7 +319,7 @@ public class TimerManager
                         timeSupplier.get(),
                         0L
                     );
-                    timer.alignAwardedUnits(action.get().getTimeUnit());
+                    timer.alignAwardedUnits(action.get().getSecondsPerUnit());
                     activeTimers.put(timer.getId(), timer);
                 }
             }
@@ -334,9 +343,45 @@ public class TimerManager
         configManager.setConfiguration(GokIrlBankedXpConfig.GROUP, CONFIG_KEY, json);
     }
 
-    public record TimerSnapshot(UUID id, String actionName, long elapsedSeconds, boolean paused,
-                                Map<Skill, Long> rates, TimeUnit timeUnit)
+    /**
+     * Immutable view data for the timer list. This intentionally uses an ordinary
+     * class instead of a Java record because RuneLite Plugin Hub targets Java 11.
+     */
+    public static final class TimerSnapshot
     {
+        private final UUID id;
+        private final String actionName;
+        private final long elapsedSeconds;
+        private final boolean paused;
+        private final Map<Skill, Long> rates;
+        private final String unitName;
+
+        TimerSnapshot(UUID id, String actionName, long elapsedSeconds, boolean paused,
+                      Map<Skill, Long> rates, String unitName)
+        {
+            this.id = id;
+            this.actionName = actionName;
+            this.elapsedSeconds = elapsedSeconds;
+            this.paused = paused;
+            this.rates = rates;
+            this.unitName = unitName;
+        }
+
+        public UUID id()
+        {
+            return id;
+        }
+
+        public String actionName()
+        {
+            return actionName;
+        }
+
+        public boolean paused()
+        {
+            return paused;
+        }
+
         public String formatRates()
         {
             if (rates == null || rates.isEmpty())
@@ -344,7 +389,7 @@ public class TimerManager
                 return "";
             }
 
-            String unit = timeUnit.getDisplayName().toLowerCase(Locale.US);
+            String unit = unitName == null ? "unit" : unitName.toLowerCase(Locale.US);
             List<String> parts = new ArrayList<>();
             for (Map.Entry<Skill, Long> entry : rates.entrySet())
             {

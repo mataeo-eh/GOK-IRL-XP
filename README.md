@@ -15,23 +15,43 @@ Turn your real-life effort into RuneScape progress. Bank XP for any skill by log
 - **Overlay summaries:** View banked XP totals and active timers on-screen.
 - **Auto-save:** Actions, timers, and banked XP persist between RuneLite sessions.
 
-## Installation (Manual)
-The plugin is not yet on the Plugin Hub. To install locally:
-1. Build the JAR (or download a release JAR if provided).
+## Testing the Unpublished Plugin
+
+### Normal testing iteration
+
+Once `~/.runelite/credentials.properties` exists, close every other RuneLite window and run:
+
+```bash
+cd "$HOME/Desktop/My_programming/git/GOK-IRL-XP"
+./gradlew run
+```
+
+This builds the current source and opens a development RuneLite client with **GOK IRL Banked XP** injected. You do not run the plugin JAR directly. Find and enable the plugin in RuneLite's Plugins panel if it is not already enabled.
+
+After changing the plugin, close the development client and run the same two commands again. Stop a client launched from Terminal with `Control-C` if its window does not close the Gradle process.
+
+### One-time Jagex Account setup
+
+You do not need a legacy RuneScape account. Jagex Account authentication happens through Jagex Launcher, and the development client reuses the exported session credentials.
+
+1. Open the Jagex-managed RuneLite configuration on macOS:
+
    ```bash
-   ./gradlew clean build
+   cd "$HOME/Library/Application Support/Jagex Launcher/Games/Old School RuneScape/RuneLite"
+   ./RuneLite.app/Contents/MacOS/RuneLite --configure
    ```
-   The file `build/libs/GOK-IRL-Banked_XP-0.0.1.jar` is produced.
-2. Enable developer mode in RuneLite:
-   - Run RuneLite with `--developer-mode` or toggle Developer Mode in settings.
-3. Allow external plugins and create the plugins folder if needed:
-   - Windows: `%userprofile%\.runelite\plugins`
-   - macOS/Linux: `~/.runelite/plugins`
-4. Copy the JAR into that plugins folder.
-5. Restart RuneLite and enable **GOK IRL Banked XP** in the Plugins panel.
+
+2. Put `--insecure-write-credentials` in **Client arguments**, save, and close the configuration window. Remove `--developer-mode` if it is present.
+3. Open **Jagex Launcher** normally and click **Play** for RuneLite. This authenticated launch creates `~/.runelite/credentials.properties`.
+4. Close RuneLite. You may now remove `--insecure-write-credentials` from the launcher configuration; the credentials file remains available for future development launches.
+5. Use the **Normal testing iteration** commands above.
+
+If the saved credentials expire or you use **End sessions** in the RuneScape account settings, repeat the one-time setup to refresh them.
+
+Never share or commit `~/.runelite/credentials.properties`. Delete it when you no longer need local development access. The official Jagex-launched client cannot load unpublished development plugins itself, so authentication and local plugin execution remain separate stages.
 
 ## Quick Start (5 Minutes)
-1. **Install and enable** the plugin (see above).
+1. **Launch and enable** the plugin (see above).
 2. Open the **IRL Actions** tab (new sidebar button).
 3. Click **New Action** and create “Walking” with `50 XP/min` to Agility (add Hitpoints 25 XP/min if you like).
 4. Select the action in the Timers section and click **Start Timer**. Watch the overlay for elapsed time and rates.
@@ -45,12 +65,13 @@ The plugin is not yet on the Plugin Hub. To install locally:
 
 ### Creating Actions
 1. Click **New Action**.
-2. Enter a name (e.g., “Push-ups”), pick a time unit (Seconds/Minutes/Hours), and set a default XP per unit.
-3. Tick the skills you want to reward. Leave “Use default” checked to apply the default rate, or enter a custom XP amount per skill.
-4. Save. Actions persist across restarts.
+2. Enter a name (e.g., “Push-ups”), type a unit name, define how many seconds make one unit, and set a default XP per unit.
+3. The **Units** field also lists unit names from actions you previously saved; selecting one restores its saved duration.
+4. Tick the skills you want to reward. Leave “Use default” checked to apply the default rate, or enter a custom XP amount per skill.
+5. Save. The action and its unit become available to timers and persist across restarts.
 
 ### Timers
-- Select an action in the Timers section and click **Start Timer**.
+- Select an action by name in the Timers section and click **Start Selected Action**.
 - Use **Pause**, **Resume**, or **Stop** on the selected timer.
 - Multiple timers can run at once; each action keeps its own XP rates and elapsed time.
 - Timers only run while RuneLite is open. They pause on shutdown and continue when you reopen the client.
@@ -64,7 +85,7 @@ The plugin is not yet on the Plugin Hub. To install locally:
 - Lists active timers with elapsed time and XP rates so you can see what’s running without opening the sidebar.
 
 ### Data Persistence
-- Actions, timers, and banked XP save automatically via RuneLite’s config. No export is required to keep your progress.
+- Actions, custom units, timers, and banked XP save automatically via RuneLite’s config. No export is required to keep your progress.
 
 ## Configuration
 - **Low XP threshold:** Highlight skills in the overlay when banked XP falls below this number (default 500).
@@ -79,10 +100,10 @@ The plugin is not yet on the Plugin Hub. To install locally:
 - **Do I need to re-create actions each time?** No, actions persist. You can also edit or delete them later.
 
 ## Troubleshooting
-- **Plugin doesn’t appear:** Ensure developer mode and external plugins are enabled, and the JAR is in the correct plugins folder.
+- **Plugin doesn’t appear:** Confirm `~/.runelite/credentials.properties` exists, close the official client, and start the development client with `./gradlew run`.
 - **Timers not moving:** Verify you selected an action and clicked Start. Timers only tick while RuneLite stays open.
 - **Overlay missing:** It hides when there is no banked XP and no active timers. Add XP or start a timer to show it.
-- **Build issues:** Use Java 21 for builds (`JAVA_HOME` should point to a JDK 21 install). Gradle may complain on newer JDKs.
+- **Build issues:** Run `./gradlew --version` and confirm Gradle sees JDK 11 or newer. Plugin source is compiled for Java 11 to match Plugin Hub requirements.
 
 ## Support
 - Open an issue in this repository if something breaks or a feature is unclear.

@@ -2,7 +2,6 @@ package com.gokirlbankedxp.service;
 
 import com.gokirlbankedxp.GokIrlBankedXpConfig;
 import com.gokirlbankedxp.model.IrlAction;
-import com.gokirlbankedxp.model.TimeUnit;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonParseException;
@@ -27,7 +26,11 @@ public class IrlActionManager
 {
     private static final Logger log = LoggerFactory.getLogger(IrlActionManager.class);
     private static final String CONFIG_KEY = "irlActionsJson";
+    private static final String UNITS_CONFIG_KEY = "irlActionUnitsJson";
     private static final Type ACTION_LIST_TYPE = new TypeToken<List<IrlAction>>()
+    {
+    }.getType();
+    private static final Type UNIT_MAP_TYPE = new TypeToken<Map<String, Long>>()
     {
     }.getType();
 
@@ -36,6 +39,7 @@ public class IrlActionManager
 
     private final Object lock = new Object();
     private final Map<UUID, IrlAction> actions = new LinkedHashMap<>();
+    private final Map<String, Long> savedUnits = new java.util.TreeMap<>(String.CASE_INSENSITIVE_ORDER);
 
     @Inject
     public IrlActionManager(ConfigManager configManager)
@@ -54,6 +58,7 @@ public class IrlActionManager
         synchronized (lock)
         {
             actions.clear();
+            loadSavedUnitsLocked();
             String raw = configManager.getConfiguration(GokIrlBankedXpConfig.GROUP, CONFIG_KEY);
 
             if (raw != null && !raw.isBlank())
@@ -74,23 +79,20 @@ public class IrlActionManager
 
                             warnOnDuplicateNameLocked(normalized);
                             actions.put(normalized.getId(), normalized);
+                            rememberUnitLocked(normalized);
                         }
                     }
                 }
                 catch (JsonParseException ex)
                 {
-                    log.warn("Failed to parse IRL actions config; restoring defaults", ex);
+                    log.warn("Failed to parse IRL actions config; keeping the action library empty", ex);
                 }
             }
 
-            if (actions.isEmpty())
-            {
-                applyDefaultsLocked();
-            }
-            else
-            {
-                saveActionsLocked();
-            }
+            // Persist the normalized representation (including migrations from
+            // legacy enum-backed units). An empty library intentionally remains
+            // empty; unit choices now come only from actions the user saved.
+            saveActionsLocked();
 
             return snapshot();
         }
@@ -101,6 +103,15 @@ public class IrlActionManager
         synchronized (lock)
         {
             return List.copyOf(actions.values());
+        }
+    }
+
+    /** Returns only unit definitions represented by actions the user has saved. */
+    public Map<String, Long> getSavedUnits()
+    {
+        synchronized (lock)
+        {
+            return new LinkedHashMap<>(savedUnits);
         }
     }
 
@@ -129,6 +140,7 @@ public class IrlActionManager
         {
             warnOnDuplicateNameLocked(normalized);
             actions.put(normalized.getId(), normalized);
+            rememberUnitLocked(normalized);
             saveActionsLocked();
             return normalized;
         }
@@ -151,6 +163,7 @@ public class IrlActionManager
 
             warnOnDuplicateNameLocked(normalized);
             actions.put(normalized.getId(), normalized);
+            rememberUnitLocked(normalized);
             saveActionsLocked();
             return true;
         }
@@ -182,16 +195,6 @@ public class IrlActionManager
         }
     }
 
-    private void applyDefaultsLocked()
-    {
-        List<IrlAction> defaults = buildDefaultActions();
-        for (IrlAction action : defaults)
-        {
-            actions.put(action.getId(), action);
-        }
-        saveActionsLocked();
-    }
-
     private IrlAction normalize(IrlAction action)
     {
         if (action == null)
@@ -199,6 +202,8 @@ public class IrlActionManager
             return IrlAction.builder()
                 .id(UUID.randomUUID())
                 .name("")
+                .unitName("")
+                .secondsPerUnit(0L)
                 .timeUnit(null)
                 .defaultXpPerUnit(0L)
                 .skillMappings(Map.of())
@@ -223,7 +228,9 @@ public class IrlActionManager
         return IrlAction.builder()
             .id(action.getId())
             .name(action.getName())
-            .timeUnit(action.getTimeUnit())
+            .unitName(action.getUnitName())
+            .secondsPerUnit(action.getSecondsPerUnit())
+            .timeUnit(null)
             .defaultXpPerUnit(action.getDefaultXpPerUnit())
             .skillMappings(sanitized)
             .build();
@@ -233,35 +240,51 @@ public class IrlActionManager
     {
         String json = gson.toJson(actions.values());
         configManager.setConfiguration(GokIrlBankedXpConfig.GROUP, CONFIG_KEY, json);
+        configManager.setConfiguration(GokIrlBankedXpConfig.GROUP, UNITS_CONFIG_KEY, gson.toJson(savedUnits));
+    }
+
+    /** Loads the independently persisted unit library before actions are migrated. */
+    private void loadSavedUnitsLocked()
+    {
+        savedUnits.clear();
+        String raw = configManager.getConfiguration(GokIrlBankedXpConfig.GROUP, UNITS_CONFIG_KEY);
+        if (raw == null || raw.isBlank())
+        {
+            return;
+        }
+
+        try
+        {
+            Map<String, Long> parsed = gson.fromJson(raw, UNIT_MAP_TYPE);
+            if (parsed != null)
+            {
+                parsed.forEach((name, seconds) -> {
+                    if (name != null && !name.isBlank() && seconds != null && seconds > 0)
+                    {
+                        savedUnits.put(name.trim(), seconds);
+                    }
+                });
+            }
+        }
+        catch (JsonParseException ex)
+        {
+            log.warn("Failed to parse saved action units; rebuilding them from saved actions", ex);
+        }
+    }
+
+    private void rememberUnitLocked(IrlAction action)
+    {
+        String name = action.getUnitName();
+        long seconds = action.getSecondsPerUnit();
+        if (name != null && !name.isBlank() && seconds > 0)
+        {
+            savedUnits.put(name.trim(), seconds);
+        }
     }
 
     private List<IrlAction> snapshot()
     {
         return new ArrayList<>(actions.values());
-    }
-
-    private List<IrlAction> buildDefaultActions()
-    {
-        Map<Skill, Long> walking = new EnumMap<>(Skill.class);
-        walking.put(Skill.AGILITY, 50L);
-
-        Map<Skill, Long> pushUps = new EnumMap<>(Skill.class);
-        pushUps.put(Skill.STRENGTH, 5L);
-
-        List<IrlAction> defaults = new ArrayList<>();
-        defaults.add(IrlAction.builder()
-            .name("Walking")
-            .timeUnit(TimeUnit.MINUTES)
-            .defaultXpPerUnit(50L)
-            .skillMappings(walking)
-            .build());
-        defaults.add(IrlAction.builder()
-            .name("Push-ups")
-            .timeUnit(TimeUnit.SECONDS)
-            .defaultXpPerUnit(5L)
-            .skillMappings(pushUps)
-            .build());
-        return defaults;
     }
 
     private void warnOnDuplicateNameLocked(IrlAction candidate)
