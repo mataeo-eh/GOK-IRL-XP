@@ -2,40 +2,95 @@ plugins {
     id 'java'
 }
 
-group = 'com.gokirlbankedxp'
-version = '0.0.1'
-
-def runeliteVersion = '1.12.7'
-
-sourceCompatibility = JavaVersion.VERSION_21
-targetCompatibility = JavaVersion.VERSION_21
-
-tasks.withType(JavaCompile).configureEach {
-    options.encoding = 'UTF-8'
-    options.release = 21
-}
-
 repositories {
-    mavenCentral()
+    mavenLocal()
     maven {
-        url 'https://repo.runelite.net'
+        url = 'https://repo.runelite.net'
+        content {
+            includeGroupByRegex("net\\.runelite.*")
+        }
     }
+    mavenCentral()
 }
+
+// Plugin Hub builds must track the current RuneLite release and target Java 11.
+def runeLiteVersion = 'latest.release'
+def pluginMainClass = 'com.gokirlbankedxp.GokIrlBankedXpPluginTest'
 
 dependencies {
-    compileOnly "net.runelite:client:${runeliteVersion}"
+    compileOnly group: 'net.runelite', name: 'client', version: runeLiteVersion
+
     compileOnly 'org.projectlombok:lombok:1.18.42'
-    implementation "jakarta.inject:jakarta.inject-api:1.0.3"
     annotationProcessor 'org.projectlombok:lombok:1.18.42'
 
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.9.3'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.9.3'
-    testImplementation "net.runelite:client:${runeliteVersion}"
+    testImplementation group: 'net.runelite', name: 'client', version: runeLiteVersion
+    testImplementation group: 'net.runelite', name: 'jshell', version: runeLiteVersion
     testImplementation 'org.mockito:mockito-core:4.11.0'
     testImplementation 'org.mockito:mockito-inline:4.11.0'
+}
+
+group = 'com.gokirlbankedxp'
+version = '0.0.1'
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release.set(11)
 }
 
 test {
     useJUnitPlatform()
     jvmArgs '-Dnet.bytebuddy.experimental=true'
+}
+
+// Starts RuneLite with this plugin injected directly from the test classpath.
+// Jagex Account users authenticate once through Jagex Launcher using RuneLite's
+// documented credentials export, after which this client reuses those credentials.
+tasks.register('run', JavaExec) {
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = pluginMainClass
+
+    jvmArgs '-ea'
+    // RuneLite's macOS fullscreen integration needs this module opened on JDK 17+.
+    if (System.getProperty('os.name').toLowerCase().contains('mac')
+        && JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_17))
+    {
+        jvmArgs '--add-opens=java.desktop/com.apple.eawt=ALL-UNNAMED'
+    }
+    args '--developer-mode', '--debug'
+
+    doFirst {
+        File credentials = new File(System.getProperty('user.home'), '.runelite/credentials.properties')
+        if (!credentials.isFile())
+        {
+            logger.warn('Jagex Account credentials are not provisioned for development.')
+            logger.warn('Follow the README Jagex Launcher setup before logging in to this client.')
+        }
+    }
+}
+
+tasks.register('shadowJar', Jar) {
+    dependsOn configurations.testRuntimeClasspath
+    manifest {
+        attributes('Main-Class': pluginMainClass, 'Multi-Release': true)
+    }
+
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from sourceSets.main.output
+    from sourceSets.test.output
+    from {
+        configurations.testRuntimeClasspath.collect { file ->
+            file.isDirectory() ? file : zipTree(file)
+        }
+    }
+    exclude 'META-INF/INDEX.LIST'
+    exclude 'META-INF/*.SF'
+    exclude 'META-INF/*.DSA'
+    exclude 'META-INF/*.RSA'
+    exclude '**/module-info.class'
+
+    group = BasePlugin.BUILD_GROUP
+    archiveClassifier.set('shadow')
+    archiveFileName.set("${rootProject.name}-${project.version}-all.jar")
 }

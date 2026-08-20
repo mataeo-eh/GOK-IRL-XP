@@ -1,12 +1,10 @@
 TODO.md
-.gradle
-gradle/
+.gradle/
+.gradle-user-home/
 .claude/
-src/test/
 .classpath
 build/
 .idea/
-gradlew*
 .project
 .settings/
 .vscode/
@@ -23,6 +21,7 @@ tmp/
 *.iml
 *.class
 *.jar
+!gradle/wrapper/gradle-wrapper.jar
 *.war
 *.ear
 *.db
