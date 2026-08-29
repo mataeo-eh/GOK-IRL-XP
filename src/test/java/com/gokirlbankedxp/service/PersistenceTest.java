@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import com.gokirlbankedxp.GokIrlBankedXpPlugin;
 import com.gokirlbankedxp.model.IrlAction;
+import com.google.gson.Gson;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -22,6 +23,16 @@ import org.junit.jupiter.api.Test;
 /** Verifies the same config-backed save/load boundary used across client sessions. */
 class PersistenceTest
 {
+    /**
+     * Production code receives Gson from RuneLite's injector. Tests are never
+     * compiled or shipped by the Plugin Hub, so building one here is fine and
+     * keeps these cases free of a Guice bootstrap.
+     */
+    private static Gson gson()
+    {
+        return new Gson();
+    }
+
     @Test
     void legacyPresetUnitIsMigratedToTheCustomUnitShape()
     {
@@ -31,7 +42,7 @@ class PersistenceTest
             "[{\"id\":\"%s\",\"name\":\"Walking\",\"timeUnit\":\"MINUTES\","
                 + "\"defaultXpPerUnit\":50,\"skillMappings\":{\"AGILITY\":50}}]", id));
 
-        IrlActionManager manager = new IrlActionManager(inMemoryConfigManager(persistedConfig));
+        IrlActionManager manager = new IrlActionManager(inMemoryConfigManager(persistedConfig), gson());
         manager.loadActions();
 
         IrlAction migrated = manager.getAllActions().get(0);
@@ -46,7 +57,7 @@ class PersistenceTest
         Map<String, String> persistedConfig = new HashMap<>();
         ConfigManager configManager = inMemoryConfigManager(persistedConfig);
 
-        IrlActionManager firstActions = new IrlActionManager(configManager);
+        IrlActionManager firstActions = new IrlActionManager(configManager, gson());
         firstActions.loadActions();
         assertTrue(firstActions.getAllActions().isEmpty());
 
@@ -60,7 +71,7 @@ class PersistenceTest
 
         AtomicLong clock = new AtomicLong(10_000L);
         GokIrlBankedXpPlugin plugin = mock(GokIrlBankedXpPlugin.class);
-        TimerManager firstTimers = new TimerManager(configManager, firstActions, plugin, clock::get, null);
+        TimerManager firstTimers = new TimerManager(configManager, firstActions, plugin, null, gson(), clock::get);
         firstTimers.startUp();
         assertTrue(firstTimers.startTimer(action.getId()).isPresent());
         clock.addAndGet(5_000L);
@@ -68,7 +79,7 @@ class PersistenceTest
         firstTimers.shutDown();
 
         // Recreate both managers to model closing RuneLite and opening it again.
-        IrlActionManager reopenedActions = new IrlActionManager(configManager);
+        IrlActionManager reopenedActions = new IrlActionManager(configManager, gson());
         reopenedActions.loadActions();
         assertEquals(1, reopenedActions.getAllActions().size());
         IrlAction reopenedAction = reopenedActions.getAllActions().get(0);
@@ -77,7 +88,7 @@ class PersistenceTest
         assertEquals(300L, reopenedAction.getSecondsPerUnit());
         assertEquals(Map.of("Chapter", 300L), reopenedActions.getSavedUnits());
 
-        TimerManager reopenedTimers = new TimerManager(configManager, reopenedActions, plugin, clock::get, null);
+        TimerManager reopenedTimers = new TimerManager(configManager, reopenedActions, plugin, null, gson(), clock::get);
         reopenedTimers.startUp();
         assertEquals(1, reopenedTimers.getTimerSnapshots().size());
         assertEquals(action.getId(), reopenedTimers.getActiveTimers().get(0).getActionId());
@@ -86,7 +97,7 @@ class PersistenceTest
         // Units are a persistent user library, not merely a projection of the
         // actions that currently happen to reference them.
         assertTrue(reopenedActions.deleteAction(action.getId()));
-        IrlActionManager afterDeletion = new IrlActionManager(configManager);
+        IrlActionManager afterDeletion = new IrlActionManager(configManager, gson());
         afterDeletion.loadActions();
         assertTrue(afterDeletion.getAllActions().isEmpty());
         assertEquals(Map.of("Chapter", 300L), afterDeletion.getSavedUnits());

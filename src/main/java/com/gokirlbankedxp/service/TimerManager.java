@@ -5,7 +5,6 @@ import com.gokirlbankedxp.GokIrlBankedXpPlugin;
 import com.gokirlbankedxp.model.ActiveTimer;
 import com.gokirlbankedxp.model.IrlAction;
 import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import com.google.gson.JsonParseException;
 import com.google.gson.reflect.TypeToken;
 import java.lang.reflect.Type;
@@ -19,8 +18,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import javax.inject.Inject;
 import net.runelite.api.Skill;
@@ -40,29 +40,37 @@ public class TimerManager
     private final IrlActionManager actionManager;
     private final GokIrlBankedXpPlugin plugin;
     private final Supplier<Long> timeSupplier;
-    private ScheduledExecutorService scheduler;
-    private final boolean autoSchedule;
     private final Gson gson;
+
+    /**
+     * RuneLite's shared scheduler, owned by the client and used by every plugin.
+     * This class therefore only ever cancels the single task it submitted, and
+     * must never shut the executor down. Tests pass null and drive {@link #tick()}
+     * by hand so timing stays deterministic.
+     */
+    private final ScheduledExecutorService executor;
+    private ScheduledFuture<?> tickFuture;
 
     private final Object lock = new Object();
     private final Map<UUID, ActiveTimer> activeTimers = new LinkedHashMap<>();
     private int ticksSinceSave = 0;
 
     @Inject
-    public TimerManager(ConfigManager configManager, IrlActionManager actionManager, GokIrlBankedXpPlugin plugin)
+    public TimerManager(ConfigManager configManager, IrlActionManager actionManager, GokIrlBankedXpPlugin plugin,
+        ScheduledExecutorService executor, Gson gson)
     {
-        this(configManager, actionManager, plugin, System::currentTimeMillis, Executors.newSingleThreadScheduledExecutor());
+        this(configManager, actionManager, plugin, executor, gson, System::currentTimeMillis);
     }
 
-    TimerManager(ConfigManager configManager, IrlActionManager actionManager, GokIrlBankedXpPlugin plugin, Supplier<Long> timeSupplier, ScheduledExecutorService scheduler)
+    TimerManager(ConfigManager configManager, IrlActionManager actionManager, GokIrlBankedXpPlugin plugin,
+        ScheduledExecutorService executor, Gson gson, Supplier<Long> timeSupplier)
     {
         this.configManager = Objects.requireNonNull(configManager);
         this.actionManager = Objects.requireNonNull(actionManager);
         this.plugin = Objects.requireNonNull(plugin);
+        this.gson = Objects.requireNonNull(gson);
         this.timeSupplier = Objects.requireNonNull(timeSupplier);
-        this.scheduler = scheduler;
-        this.autoSchedule = scheduler != null;
-        this.gson = new GsonBuilder().create();
+        this.executor = executor;
     }
 
     public void startUp()
@@ -72,21 +80,23 @@ public class TimerManager
             loadTimersLocked();
         }
 
-        if (autoSchedule)
+        // Guarding on tickFuture keeps a startUp() after a shutDown() (the plugin
+        // being toggled off and on) from stacking a second ticking task.
+        if (executor != null && tickFuture == null)
         {
-            if (scheduler == null || scheduler.isShutdown() || scheduler.isTerminated())
-            {
-                scheduler = Executors.newSingleThreadScheduledExecutor();
-            }
-            scheduler.scheduleAtFixedRate(this::tick, 1, 1, java.util.concurrent.TimeUnit.SECONDS);
+            tickFuture = executor.scheduleAtFixedRate(this::tick, 1, 1, TimeUnit.SECONDS);
         }
     }
 
     public void shutDown()
     {
-        if (autoSchedule && scheduler != null)
+        // Cancel only the task this plugin submitted. The executor belongs to the
+        // client and is shared with every other plugin, so shutting it down here
+        // would silently break them until the client restarts.
+        if (tickFuture != null)
         {
-            scheduler.shutdownNow();
+            tickFuture.cancel(false);
+            tickFuture = null;
         }
 
         saveTimers();

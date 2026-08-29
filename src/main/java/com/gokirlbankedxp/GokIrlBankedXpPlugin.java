@@ -112,7 +112,9 @@ public class GokIrlBankedXpPlugin extends Plugin
         clientToolbar.addNavigation(navigationButton);
 
         irlActionManager.loadActions();
-        panel.refreshActions();
+        // startUp() runs on the client thread, so every Swing mutation below has
+        // to be handed to the EDT rather than performed inline.
+        SwingUtilities.invokeLater(panel::refreshActions);
         loadStoredXp();
         timerManager.startUp();
         clientThread.invokeLater(() -> {
@@ -124,7 +126,9 @@ public class GokIrlBankedXpPlugin extends Plugin
     @Override
     protected void shutDown()
     {
-        panel.stopUiUpdates();
+        // Like startUp(), this runs on the client thread; the panel's Swing
+        // refresh timer must be stopped from the EDT.
+        SwingUtilities.invokeLater(panel::stopUiUpdates);
         if (timerManager != null)
         {
             timerManager.shutDown();

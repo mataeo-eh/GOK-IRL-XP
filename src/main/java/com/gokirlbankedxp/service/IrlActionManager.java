@@ -3,7 +3,6 @@ package com.gokirlbankedxp.service;
 import com.gokirlbankedxp.GokIrlBankedXpConfig;
 import com.gokirlbankedxp.model.IrlAction;
 import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import com.google.gson.JsonParseException;
 import com.google.gson.reflect.TypeToken;
 import java.lang.reflect.Type;
@@ -41,13 +40,14 @@ public class IrlActionManager
     private final Map<UUID, IrlAction> actions = new LinkedHashMap<>();
     private final Map<String, Long> savedUnits = new java.util.TreeMap<>(String.CASE_INSENSITIVE_ORDER);
 
+    /**
+     * RuneLite binds a shared Gson instance in its injector, and the Plugin Hub
+     * forbids constructing new Gson/GsonBuilder instances, so it is injected here
+     * rather than built. Any future customisation must go through
+     * {@code gson.newBuilder()} instead of creating a fresh instance.
+     */
     @Inject
-    public IrlActionManager(ConfigManager configManager)
-    {
-        this(configManager, new GsonBuilder().create());
-    }
-
-    IrlActionManager(ConfigManager configManager, Gson gson)
+    public IrlActionManager(ConfigManager configManager, Gson gson)
     {
         this.configManager = Objects.requireNonNull(configManager);
         this.gson = Objects.requireNonNull(gson);
