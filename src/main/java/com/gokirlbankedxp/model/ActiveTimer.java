@@ -1,7 +1,6 @@
 package com.gokirlbankedxp.model;
 
 import java.util.Collections;
-import java.util.EnumMap;
 import java.util.Map;
 import java.util.UUID;
 import net.runelite.api.Skill;
@@ -121,17 +120,9 @@ public class ActiveTimer
         }
 
         awardedUnits += newUnits;
-        Map<Skill, Long> xp = new EnumMap<>(Skill.class);
-        for (Map.Entry<Skill, Long> entry : action.getSkillMappings().entrySet())
-        {
-            Skill skill = entry.getKey();
-            long rate = action.getXpForSkill(skill);
-            if (rate > 0)
-            {
-                xp.put(skill, rate * newUnits);
-            }
-        }
-        return xp;
+        // The units -> XP conversion lives on the action so that live timers and
+        // manually logged sessions can never drift apart.
+        return action.xpForUnits(newUnits);
     }
 
     /**

@@ -51,6 +51,66 @@ class PersistenceTest
         assertFalse(persistedConfig.get("gokirlbankedxp.irlActionsJson").contains("timeUnit"));
     }
 
+    /**
+     * Actions saved before untimed actions existed carry no "timed" flag at all.
+     * They were all timer-driven, so they must come back as timed rather than
+     * silently losing their timers to a boolean defaulting to false.
+     */
+    @Test
+    void actionsSavedWithoutTheTimedFlagStayTimed()
+    {
+        UUID id = UUID.randomUUID();
+        Map<String, String> persistedConfig = new HashMap<>();
+        persistedConfig.put("gokirlbankedxp.irlActionsJson", String.format(
+            "[{\"id\":\"%s\",\"name\":\"Walking\",\"unitName\":\"Minutes\",\"secondsPerUnit\":60,"
+                + "\"defaultXpPerUnit\":50,\"skillMappings\":{\"AGILITY\":50}}]", id));
+
+        IrlActionManager manager = new IrlActionManager(inMemoryConfigManager(persistedConfig), gson());
+        manager.loadActions();
+
+        IrlAction migrated = manager.getAllActions().get(0);
+        assertTrue(migrated.isTimed());
+        assertEquals(60L, migrated.getSecondsPerUnit());
+    }
+
+    @Test
+    void untimedActionsPersistWithoutADurationAndCannotStartTimers()
+    {
+        Map<String, String> persistedConfig = new HashMap<>();
+        ConfigManager configManager = inMemoryConfigManager(persistedConfig);
+
+        IrlActionManager actions = new IrlActionManager(configManager, gson());
+        actions.loadActions();
+
+        IrlAction lifting = actions.createAction(IrlAction.builder()
+            .name("Weight lifting")
+            .unitName("pounds")
+            .timed(Boolean.FALSE)
+            .defaultXpPerUnit(1L)
+            .skillMappings(Map.of(Skill.STRENGTH, 1L))
+            .build());
+
+        assertFalse(lifting.isTimed());
+        assertEquals(0L, lifting.getSecondsPerUnit());
+
+        // The unit is still remembered for reuse, just without a duration.
+        assertEquals(Map.of("pounds", 0L), actions.getSavedUnits());
+
+        IrlActionManager reopened = new IrlActionManager(configManager, gson());
+        reopened.loadActions();
+        IrlAction restored = reopened.getAllActions().get(0);
+        assertFalse(restored.isTimed());
+        assertEquals(0L, restored.getSecondsPerUnit());
+        assertEquals(Map.of("pounds", 0L), reopened.getSavedUnits());
+
+        GokIrlBankedXpPlugin plugin = mock(GokIrlBankedXpPlugin.class);
+        TimerManager timers = new TimerManager(configManager, reopened, plugin, null, gson(), () -> 0L);
+        timers.startUp();
+        // An untimed action has no seconds-per-unit to accrue against, so a timer
+        // on one would run forever awarding nothing.
+        assertTrue(timers.startTimer(restored.getId()).isEmpty());
+    }
+
     @Test
     void customActionsUnitsAndTimersSurviveManagerRecreation()
     {

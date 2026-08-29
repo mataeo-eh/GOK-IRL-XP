@@ -23,11 +23,21 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import javax.inject.Inject;
+import javax.inject.Singleton;
 import net.runelite.api.Skill;
 import net.runelite.client.config.ConfigManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * Drives the live timers that convert elapsed real time into banked XP.
+ *
+ * <p>{@code @Singleton} is required, not decorative: the plugin and the actions
+ * panel both inject this class, and an unscoped binding would give each of them
+ * a separate manager. Only the plugin's copy has {@link #startUp()} called on
+ * it, so timers started from the panel would never tick.</p>
+ */
+@Singleton
 public class TimerManager
 {
     private static final Logger log = LoggerFactory.getLogger(TimerManager.class);
@@ -102,10 +112,18 @@ public class TimerManager
         saveTimers();
     }
 
+    /**
+     * Starts a timer for a timed action.
+     *
+     * <p>Returns empty when the action no longer exists, or when it is an
+     * untimed (benchmark-style) action. Untimed actions have no seconds-per-unit
+     * to accrue against, so a timer on one would run forever awarding nothing;
+     * those are banked through {@link ActionLogManager} instead.</p>
+     */
     public Optional<UUID> startTimer(UUID actionId)
     {
         Optional<IrlAction> action = actionManager.getAction(actionId);
-        if (action.isEmpty())
+        if (action.isEmpty() || !action.get().isTimed())
         {
             return Optional.empty();
         }
@@ -196,7 +214,7 @@ public class TimerManager
             saveTimersLocked();
         }
 
-        earnedBeforePause.forEach((skill, amount) -> plugin.addTimerXp(skill, amount));
+        earnedBeforePause.forEach((skill, amount) -> plugin.addActionXp(skill, amount));
         return true;
     }
 
@@ -254,7 +272,9 @@ public class TimerManager
             for (ActiveTimer timer : activeTimers.values())
             {
                 Optional<IrlAction> actionOptional = actionManager.getAction(timer.getActionId());
-                if (actionOptional.isEmpty())
+                // A timer is stale once its action is deleted or edited to be
+                // untimed; either way it can no longer accrue units.
+                if (actionOptional.isEmpty() || !actionOptional.get().isTimed())
                 {
                     missingActions.add(timer.getId());
                     continue;
@@ -284,7 +304,7 @@ public class TimerManager
 
         if (!pendingXp.isEmpty())
         {
-            pendingXp.forEach((skill, amount) -> plugin.addTimerXp(skill, amount));
+            pendingXp.forEach((skill, amount) -> plugin.addActionXp(skill, amount));
         }
     }
 
@@ -316,7 +336,9 @@ public class TimerManager
                 for (StoredTimer entry : stored)
                 {
                     Optional<IrlAction> action = actionManager.getAction(entry.actionId);
-                    if (action.isEmpty())
+                    // Drop timers whose action was deleted, or converted to an
+                    // untimed action, while the client was closed.
+                    if (action.isEmpty() || !action.get().isTimed())
                     {
                         continue;
                     }

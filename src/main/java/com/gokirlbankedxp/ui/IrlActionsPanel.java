@@ -1,6 +1,7 @@
 package com.gokirlbankedxp.ui;
 
 import com.gokirlbankedxp.model.IrlAction;
+import com.gokirlbankedxp.service.ActionLogManager;
 import com.gokirlbankedxp.service.IrlActionManager;
 import com.gokirlbankedxp.service.TimerManager;
 import java.awt.BorderLayout;
@@ -11,24 +12,39 @@ import java.awt.GridLayout;
 import java.awt.Window;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.text.ParseException;
 import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import javax.inject.Inject;
+import javax.inject.Singleton;
 import javax.swing.DefaultComboBoxModel;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
+import javax.swing.JFormattedTextField;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
 import javax.swing.Timer;
 import javax.swing.ListSelectionModel;
 import javax.swing.SwingUtilities;
+import net.runelite.client.util.QuantityFormatter;
 
-/** Action definitions and their live timers, embedded in the unified sidebar. */
+/**
+ * Action definitions, manual XP logging, and live timers, in the unified sidebar.
+ *
+ * <p>{@code @Singleton} for the same reason the services carry it: this panel
+ * holds the visible list models, so a second unscoped instance would be a second
+ * copy of the UI state that nothing ever refreshes.</p>
+ */
+@Singleton
 public class IrlActionsPanel extends JPanel
 {
     private static final String CARD_LIST = "LIST";
@@ -36,6 +52,7 @@ public class IrlActionsPanel extends JPanel
 
     private final IrlActionManager actionManager;
     private final TimerManager timerManager;
+    private final ActionLogManager actionLogManager;
     private final DefaultListModel<IrlAction> listModel = new DefaultListModel<>();
     private final JList<IrlAction> actionList = new JList<>(listModel);
     private final JLabel emptyLabel = new JLabel("No actions configured yet.");
@@ -46,11 +63,21 @@ public class IrlActionsPanel extends JPanel
     private final JList<TimerManager.TimerSnapshot> activeTimersList = new JList<>(activeTimersModel);
     private final Timer uiRefreshTimer;
 
+    // "Log completed" controls: bank XP for work already finished, for actions
+    // that have no timer to run (and, if the user prefers, for ones that do).
+    private final JComboBox<IrlAction> logActionSelector = new JComboBox<>();
+    private final JLabel logUnitsLabel = IrlXpUi.mutedLabel("UNITS EACH TIME");
+    private final JFormattedTextField logUnitsField = new JFormattedTextField(IrlXpUi.positiveLongFormatter());
+    private final JFormattedTextField logRepetitionsField = new JFormattedTextField(IrlXpUi.positiveLongFormatter());
+    private final JTextArea logPreview = IrlXpUi.wrappingNote(" ", 2);
+    private final JButton logButton = new JButton("BANK THIS XP");
+
     @Inject
-    public IrlActionsPanel(IrlActionManager actionManager, TimerManager timerManager)
+    public IrlActionsPanel(IrlActionManager actionManager, TimerManager timerManager, ActionLogManager actionLogManager)
     {
         this.actionManager = actionManager;
         this.timerManager = timerManager;
+        this.actionLogManager = actionLogManager;
 
         setLayout(new BorderLayout(0, 10));
         setBackground(IrlXpUi.BACKGROUND);
@@ -112,7 +139,15 @@ public class IrlActionsPanel extends JPanel
         cardContainer.setBackground(IrlXpUi.INPUT_BACKGROUND);
         actionsCard.add(cardContainer, BorderLayout.CENTER);
         add(actionsCard, BorderLayout.NORTH);
-        add(buildTimerControls(), BorderLayout.CENTER);
+
+        // Nested BorderLayouts rather than one vertical box: the log card keeps
+        // its preferred height while the timers card absorbs any leftover space,
+        // which is how the tab behaved before the log card was added.
+        JPanel lowerCards = new JPanel(new BorderLayout(0, 10));
+        lowerCards.setOpaque(false);
+        lowerCards.add(buildLogControls(), BorderLayout.NORTH);
+        lowerCards.add(buildTimerControls(), BorderLayout.CENTER);
+        add(lowerCards, BorderLayout.CENTER);
 
         refreshActionList();
         refreshActiveTimers(false);
@@ -143,13 +178,13 @@ public class IrlActionsPanel extends JPanel
             if (actions.isEmpty())
             {
                 cardLayout.show(cardContainer, CARD_EMPTY);
-                refreshTimerSelector(actions);
+                refreshSelectors(actions);
                 return;
             }
 
             actions.forEach(listModel::addElement);
             cardLayout.show(cardContainer, CARD_LIST);
-            refreshTimerSelector(actions);
+            refreshSelectors(actions);
         });
     }
 
@@ -218,13 +253,58 @@ public class IrlActionsPanel extends JPanel
         }
     }
 
+    /**
+     * Builds the "log completed work" card.
+     *
+     * <p>This is the manual route to banked XP: pick an action, say how many
+     * units one go was worth and how many times it was done, and the plugin does
+     * the arithmetic. It is what makes benchmark actions ("1 XP per pound
+     * lifted") usable, since those never run on a clock.</p>
+     */
+    private JPanel buildLogControls()
+    {
+        JPanel logPanel = IrlXpUi.card(new BorderLayout(0, 8));
+        logPanel.add(IrlXpUi.sectionTitle("Log completed work"), BorderLayout.NORTH);
+
+        IrlXpUi.styleField(logActionSelector);
+        IrlXpUi.styleField(logUnitsField);
+        IrlXpUi.styleField(logRepetitionsField);
+        logActionSelector.setRenderer(new ActionNameCellRenderer());
+        logActionSelector.addActionListener(e -> onLogSelectionChanged());
+
+        // Recompute the preview from whatever is currently typed. "value" fires
+        // once a field commits, which is enough to keep the estimate honest
+        // without reformatting the text mid-keystroke.
+        logUnitsField.addPropertyChangeListener("value", evt -> refreshLogPreview());
+        logRepetitionsField.addPropertyChangeListener("value", evt -> refreshLogPreview());
+        logUnitsField.setValue(1L);
+        logRepetitionsField.setValue(1L);
+
+        IrlXpUi.stylePrimaryButton(logButton);
+        logButton.addActionListener(e -> onLogCompletion());
+
+        JPanel rows = new JPanel(new GridLayout(0, 1, 0, 6));
+        rows.setOpaque(false);
+        rows.add(IrlXpUi.mutedLabel("ACTION"));
+        rows.add(logActionSelector);
+        rows.add(logUnitsLabel);
+        rows.add(logUnitsField);
+        rows.add(IrlXpUi.mutedLabel("HOW MANY TIMES"));
+        rows.add(logRepetitionsField);
+        rows.add(logPreview);
+        rows.add(logButton);
+
+        logPanel.add(rows, BorderLayout.CENTER);
+        return logPanel;
+    }
+
     private JPanel buildTimerControls()
     {
         JPanel timersPanel = IrlXpUi.card(new BorderLayout(0, 8));
         timersPanel.add(IrlXpUi.sectionTitle("Active timers"), BorderLayout.NORTH);
 
         IrlXpUi.styleField(timerActionSelector);
-        timerActionSelector.setRenderer(new TimerActionCellRenderer());
+        timerActionSelector.setRenderer(new ActionNameCellRenderer());
         JButton startButton = new JButton("START SELECTED ACTION");
         IrlXpUi.stylePrimaryButton(startButton);
         startButton.addActionListener(e -> onStartTimer());
@@ -282,17 +362,69 @@ public class IrlActionsPanel extends JPanel
         return timersPanel;
     }
 
-    private void refreshTimerSelector(List<IrlAction> actions)
+    /**
+     * Repopulates both action drop-downs.
+     *
+     * <p>The timer selector lists only timed actions: an untimed one has no
+     * seconds-per-unit, so a timer on it could never award anything. The log
+     * selector lists everything, because recording completed units is valid for
+     * a timed action too.</p>
+     *
+     * <p>Already on the EDT — both callers come through
+     * {@link #refreshActionList()}'s invokeLater — so this must not queue another
+     * round trip, or the selection restored below would be undone by the
+     * listeners firing afterwards.</p>
+     */
+    private void refreshSelectors(List<IrlAction> actions)
     {
-        SwingUtilities.invokeLater(() -> {
-            DefaultComboBoxModel<IrlAction> model = new DefaultComboBoxModel<>();
-            actions.forEach(model::addElement);
-            timerActionSelector.setModel(model);
-            if (model.getSize() > 0)
+        UUID previouslyLogged = selectedActionId(logActionSelector);
+
+        DefaultComboBoxModel<IrlAction> timerModel = new DefaultComboBoxModel<>();
+        DefaultComboBoxModel<IrlAction> logModel = new DefaultComboBoxModel<>();
+        for (IrlAction action : actions)
+        {
+            if (action.isTimed())
             {
-                timerActionSelector.setSelectedIndex(0);
+                timerModel.addElement(action);
             }
-        });
+            logModel.addElement(action);
+        }
+
+        timerActionSelector.setModel(timerModel);
+        if (timerModel.getSize() > 0)
+        {
+            timerActionSelector.setSelectedIndex(0);
+        }
+
+        logActionSelector.setModel(logModel);
+        restoreSelection(logActionSelector, logModel, previouslyLogged);
+        onLogSelectionChanged();
+    }
+
+    /** Keeps the user's chosen action selected across a list refresh. */
+    private void restoreSelection(JComboBox<IrlAction> selector, DefaultComboBoxModel<IrlAction> model, UUID actionId)
+    {
+        if (model.getSize() == 0)
+        {
+            return;
+        }
+
+        for (int i = 0; i < model.getSize(); i++)
+        {
+            if (model.getElementAt(i).getId().equals(actionId))
+            {
+                selector.setSelectedIndex(i);
+                return;
+            }
+        }
+
+        selector.setSelectedIndex(0);
+    }
+
+    private UUID selectedActionId(JComboBox<IrlAction> selector)
+    {
+        IrlAction selected = (IrlAction) selector.getSelectedItem();
+        return selected == null ? null : selected.getId();
     }
 
     private void onStartTimer()
@@ -300,7 +432,9 @@ public class IrlActionsPanel extends JPanel
         IrlAction action = (IrlAction) timerActionSelector.getSelectedItem();
         if (action == null)
         {
-            JOptionPane.showMessageDialog(this, "Select an action to start a timer.", "No action selected", JOptionPane.INFORMATION_MESSAGE);
+            JOptionPane.showMessageDialog(this,
+                "No timed actions to start. Tick \"Run this action on a timer\" when creating or editing an action.",
+                "No action selected", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
 
@@ -312,6 +446,110 @@ public class IrlActionsPanel extends JPanel
             return;
         }
         refreshActiveTimers(false);
+    }
+
+    /** Relabels the units field with the selected action's own unit name. */
+    private void onLogSelectionChanged()
+    {
+        IrlAction action = (IrlAction) logActionSelector.getSelectedItem();
+        String unit = action == null ? "UNITS" : action.getUnitName().toUpperCase(Locale.US);
+        logUnitsLabel.setText(unit + " EACH TIME");
+        refreshLogPreview();
+    }
+
+    /**
+     * Shows what the current entry would bank, without banking it.
+     *
+     * <p>The numbers come from the same service call that performs the award, so
+     * the preview can never disagree with what the button does.</p>
+     */
+    private void refreshLogPreview()
+    {
+        IrlAction action = (IrlAction) logActionSelector.getSelectedItem();
+        Optional<ActionLogManager.LoggedAward> award = action == null
+            ? Optional.empty()
+            : actionLogManager.preview(action.getId(), parsePositive(logUnitsField), parsePositive(logRepetitionsField));
+
+        if (award.isEmpty())
+        {
+            logPreview.setForeground(IrlXpUi.MUTED_TEXT);
+            logPreview.setText("Enter how many units and how many times.");
+            logButton.setEnabled(false);
+            return;
+        }
+
+        ActionLogManager.LoggedAward value = award.get();
+        logPreview.setForeground(IrlXpUi.SUCCESS);
+        logPreview.setText(String.format("%s %s -> %s",
+            QuantityFormatter.formatNumber(value.getTotalUnits()),
+            value.getUnitName(),
+            describeAward(value)));
+        logButton.setEnabled(true);
+    }
+
+    private void onLogCompletion()
+    {
+        IrlAction action = (IrlAction) logActionSelector.getSelectedItem();
+        if (action == null)
+        {
+            JOptionPane.showMessageDialog(this, "Create an action first, then log the work you completed.",
+                "No action selected", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+
+        Optional<ActionLogManager.LoggedAward> award =
+            actionLogManager.log(action.getId(), parsePositive(logUnitsField), parsePositive(logRepetitionsField));
+
+        if (award.isEmpty())
+        {
+            JOptionPane.showMessageDialog(this,
+                "Enter a positive number of units and repetitions, then try again.",
+                "Nothing banked", JOptionPane.WARNING_MESSAGE);
+            refreshActionList();
+            return;
+        }
+
+        ActionLogManager.LoggedAward value = award.get();
+        JOptionPane.showMessageDialog(this,
+            String.format("Banked %s for %s %s of %s.",
+                describeAward(value),
+                QuantityFormatter.formatNumber(value.getTotalUnits()),
+                value.getUnitName(),
+                value.getActionName()),
+            "XP banked", JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    /** Renders an award as "Agility +6,250, Hitpoints +2,000". */
+    private static String describeAward(ActionLogManager.LoggedAward award)
+    {
+        return award.getAwardedXp().entrySet().stream()
+            .map(entry -> entry.getKey().getName() + " +" + QuantityFormatter.formatNumber(entry.getValue()))
+            .collect(Collectors.joining(", "));
+    }
+
+    /**
+     * Reads a formatted field as a positive count.
+     *
+     * <p>Returns 0 for blank or half-typed input, which the caller treats as
+     * "nothing to bank yet" rather than as an error.</p>
+     */
+    private static long parsePositive(JFormattedTextField field)
+    {
+        try
+        {
+            field.commitEdit();
+        }
+        catch (ParseException ignored)
+        {
+            // Leaves the last committed value in place; handled below.
+        }
+
+        Object value = field.getValue();
+        if (value instanceof Number)
+        {
+            return Math.max(0L, ((Number) value).longValue());
+        }
+        return 0L;
     }
 
     private void onPauseTimer()
@@ -401,11 +639,14 @@ public class IrlActionsPanel extends JPanel
             if (value instanceof IrlAction)
             {
                 IrlAction action = (IrlAction) value;
-                int skillCount = action.getSkillMappings() == null ? 0 : action.getSkillMappings().size();
+                int skillCount = action.getSkillMappings().size();
                 String unitName = action.getUnitName() == null ? "" : action.getUnitName();
-                setText(String.format("%s (%s) - %d skill%s",
+                // The timed/untimed marker tells the user at a glance which
+                // actions can be started as a timer and which must be logged.
+                setText(String.format("%s (%s, %s) - %d skill%s",
                     action.getName(),
                     unitName,
+                    action.isTimed() ? "timed" : "logged",
                     skillCount,
                     skillCount == 1 ? "" : "s"));
             }
@@ -440,8 +681,8 @@ public class IrlActionsPanel extends JPanel
         }
     }
 
-    /** Ensures the timer selector shows a user-facing action name, never a Java object identifier. */
-    private static class TimerActionCellRenderer extends DefaultListCellRenderer
+    /** Ensures the action drop-downs show a user-facing name, never a Java object identifier. */
+    private static class ActionNameCellRenderer extends DefaultListCellRenderer
     {
         @Override
         public java.awt.Component getListCellRendererComponent(

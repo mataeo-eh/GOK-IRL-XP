@@ -9,6 +9,7 @@ import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.GridLayout;
 import javax.inject.Inject;
+import javax.inject.Singleton;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -24,6 +25,7 @@ import net.runelite.client.ui.PluginPanel;
  * owns navigation and presentation. That lets XP and action behavior evolve
  * independently without exposing them as separate RuneLite plugins.</p>
  */
+@Singleton
 class GokIrlXpPanel extends PluginPanel
 {
     private static final String XP_CARD = "XP";

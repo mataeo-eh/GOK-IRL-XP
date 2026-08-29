@@ -16,11 +16,22 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import javax.inject.Inject;
+import javax.inject.Singleton;
 import net.runelite.api.Skill;
 import net.runelite.client.config.ConfigManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * Owns the user's action library.
+ *
+ * <p>Guice leaves unannotated bindings unscoped, so without {@code @Singleton}
+ * every injection point (the plugin, the timer manager, the actions panel) would
+ * receive its own manager holding its own copy of the library. Only the plugin's
+ * copy is ever loaded from config, so the others looked permanently empty and
+ * lookups by id failed even for actions the user had just created.</p>
+ */
+@Singleton
 public class IrlActionManager
 {
     private static final Logger log = LoggerFactory.getLogger(IrlActionManager.class);
@@ -204,6 +215,7 @@ public class IrlActionManager
                 .name("")
                 .unitName("")
                 .secondsPerUnit(0L)
+                .timed(Boolean.FALSE)
                 .timeUnit(null)
                 .defaultXpPerUnit(0L)
                 .skillMappings(Map.of())
@@ -225,11 +237,16 @@ public class IrlActionManager
             }
         }
 
+        // isTimed()/getSecondsPerUnit() already resolve the legacy shapes, so
+        // writing them back through the builder persists the migrated form and
+        // drops the deprecated timeUnit enum.
+        boolean timed = action.isTimed();
         return IrlAction.builder()
             .id(action.getId())
             .name(action.getName())
             .unitName(action.getUnitName())
-            .secondsPerUnit(action.getSecondsPerUnit())
+            .secondsPerUnit(timed ? action.getSecondsPerUnit() : 0L)
+            .timed(timed)
             .timeUnit(null)
             .defaultXpPerUnit(action.getDefaultXpPerUnit())
             .skillMappings(sanitized)
@@ -259,7 +276,9 @@ public class IrlActionManager
             if (parsed != null)
             {
                 parsed.forEach((name, seconds) -> {
-                    if (name != null && !name.isBlank() && seconds != null && seconds > 0)
+                    // Zero is a legitimate duration here: it marks a unit that
+                    // only untimed actions use (pounds, repetitions, chapters).
+                    if (name != null && !name.isBlank() && seconds != null && seconds >= 0)
                     {
                         savedUnits.put(name.trim(), seconds);
                     }
@@ -272,13 +291,30 @@ public class IrlActionManager
         }
     }
 
+    /**
+     * Adds the action's unit to the reusable unit library.
+     *
+     * <p>Untimed actions contribute the unit's name with a zero duration. A
+     * known duration is never overwritten by one, so a unit shared between a
+     * timed and an untimed action keeps the duration the timed action needs.</p>
+     */
     private void rememberUnitLocked(IrlAction action)
     {
         String name = action.getUnitName();
-        long seconds = action.getSecondsPerUnit();
-        if (name != null && !name.isBlank() && seconds > 0)
+        if (name == null || name.isBlank())
         {
-            savedUnits.put(name.trim(), seconds);
+            return;
+        }
+
+        String trimmed = name.trim();
+        long seconds = action.getSecondsPerUnit();
+        if (seconds > 0)
+        {
+            savedUnits.put(trimmed, seconds);
+        }
+        else
+        {
+            savedUnits.putIfAbsent(trimmed, 0L);
         }
     }
 

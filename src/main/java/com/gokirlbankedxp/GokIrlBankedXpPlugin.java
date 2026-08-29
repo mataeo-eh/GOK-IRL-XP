@@ -1,6 +1,7 @@
 package com.gokirlbankedxp;
 
 import com.google.common.base.Strings;
+import com.google.common.math.LongMath;
 import com.google.inject.Provides;
 import com.gokirlbankedxp.service.IrlActionManager;
 import com.gokirlbankedxp.service.TimerManager;
@@ -233,7 +234,9 @@ public class GokIrlBankedXpPlugin extends Plugin
 
         synchronized (dataLock)
         {
-            storedXp.merge(skill, amount, Long::sum);
+            // Saturating: banked totals clamp at the long ceiling rather than
+            // wrapping negative, which would read as "no XP banked".
+            storedXp.merge(skill, amount, LongMath::saturatedAdd);
             warnedSkills.remove(skill);
             persistStoredXpLocked();
         }
@@ -241,7 +244,12 @@ public class GokIrlBankedXpPlugin extends Plugin
         rebuildSnapshotAndNotify();
     }
 
-    public void addTimerXp(Skill skill, long amount)
+    /**
+     * Banks XP earned from an IRL action, whether accrued by a live timer or
+     * logged after the fact. Public because it is the services' entry point;
+     * {@link #addManualXp} stays package-private for the XP tab's direct entry.
+     */
+    public void addActionXp(Skill skill, long amount)
     {
         addManualXp(skill, amount);
     }

@@ -12,6 +12,7 @@ import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
 import javax.swing.border.Border;
 import javax.swing.border.CompoundBorder;
 import javax.swing.text.NumberFormatter;
@@ -124,6 +125,31 @@ public final class IrlXpUi
         list.setFixedCellHeight(36);
         scrollPane.setBorder(BorderFactory.createLineBorder(BORDER));
         scrollPane.getViewport().setBackground(INPUT_BACKGROUND);
+    }
+
+    /**
+     * A muted, multi-line explanatory note.
+     *
+     * <p>A plain {@link JLabel} cannot wrap without HTML and a hard-coded pixel
+     * width, so hints use a non-interactive {@link JTextArea} instead. Wrapped
+     * text areas cannot work out their own height until they have been given a
+     * width, so callers state how many lines to reserve.</p>
+     */
+    public static JTextArea wrappingNote(String text, int rows)
+    {
+        JTextArea area = new JTextArea(text);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        area.setEditable(false);
+        area.setFocusable(false);
+        area.setOpaque(false);
+        area.setBorder(null);
+        area.setForeground(MUTED_TEXT);
+        // JTextArea defaults to a monospaced font; borrow the label font so the
+        // note reads as part of the form rather than as sample output.
+        area.setFont(new JLabel().getFont().deriveFont(11f));
+        area.setRows(rows);
+        return area;
     }
 
     /**

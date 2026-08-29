@@ -11,6 +11,7 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.Locale;
 import javax.inject.Inject;
+import javax.inject.Singleton;
 import javax.swing.BorderFactory;
 import javax.swing.DefaultListModel;
 import javax.swing.JButton;
@@ -28,6 +29,7 @@ import net.runelite.api.Skill;
 import net.runelite.client.util.QuantityFormatter;
 
 /** Focused banked-XP view embedded inside the unified IRL XP sidebar. */
+@Singleton
 class GokIrlBankedXpPanel extends JPanel
 {
     private static final Insets FIELD_INSETS = new Insets(4, 0, 4, 8);

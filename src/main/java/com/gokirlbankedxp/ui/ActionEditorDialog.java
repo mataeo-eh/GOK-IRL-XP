@@ -5,7 +5,9 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
-import java.awt.GridLayout;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.Insets;
 import java.awt.Window;
 import java.text.ParseException;
 import java.util.EnumMap;
@@ -19,6 +21,7 @@ import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
+import javax.swing.JComponent;
 import javax.swing.JDialog;
 import javax.swing.JFormattedTextField;
 import javax.swing.JLabel;
@@ -34,13 +37,24 @@ class ActionEditorDialog extends JDialog
 {
     private static final Color ERROR_COLOR = new Color(0x522B2D);
 
+    /** Default duration offered the first time an action is marked as timed. */
+    private static final long DEFAULT_SECONDS_PER_UNIT = 60L;
+
     private final JTextField nameField = new JTextField();
     private final JComboBox<String> unitCombo = new JComboBox<>();
+    private final JCheckBox timedCheck = new JCheckBox("Run this action on a timer");
+    private final JLabel secondsLabel = fieldLabel("Seconds per unit");
     private final JFormattedTextField secondsPerUnitField = new JFormattedTextField(IrlXpUi.positiveLongFormatter());
     private final JFormattedTextField defaultXpField = new JFormattedTextField(IrlXpUi.positiveLongFormatter());
     private final JLabel errorLabel = new JLabel(" ");
     private final Map<Skill, SkillRow> skillRows = new LinkedHashMap<>();
     private final Map<String, Long> savedUnits;
+
+    /**
+     * Remembers the duration while the action is switched to untimed, so
+     * re-ticking the box restores what the user had typed rather than a default.
+     */
+    private long lastTimedSeconds = DEFAULT_SECONDS_PER_UNIT;
 
     private IrlAction resultAction;
     private final IrlAction existingAction;
@@ -82,9 +96,15 @@ class ActionEditorDialog extends JDialog
         else
         {
             unitCombo.setSelectedItem(null);
-            secondsPerUnitField.setValue(60L);
+            // New actions default to timed, which is what the plugin did before
+            // untimed actions existed.
+            timedCheck.setSelected(true);
             defaultXpField.setValue(50L);
         }
+
+        // Applied after populating so the seconds row's enabled state and value
+        // always match the Timed box, whichever branch set it.
+        refreshTimedState();
 
         defaultXpField.addPropertyChangeListener("value", evt -> propagateDefaultRate());
 
@@ -102,7 +122,9 @@ class ActionEditorDialog extends JDialog
         JPanel panel = IrlXpUi.card(new BorderLayout(0, 10));
         panel.add(IrlXpUi.sectionTitle(existingAction == null ? "Create an action" : "Edit action"), BorderLayout.NORTH);
 
-        JPanel fields = new JPanel(new GridLayout(0, 2, 8, 8));
+        // GridBagLayout rather than a two-column grid so the explanatory notes
+        // can span the full width directly beneath the control they describe.
+        JPanel fields = new JPanel(new GridBagLayout());
         fields.setOpaque(false);
 
         IrlXpUi.styleField(nameField);
@@ -110,26 +132,105 @@ class ActionEditorDialog extends JDialog
         IrlXpUi.styleField(secondsPerUnitField);
         IrlXpUi.styleField(defaultXpField);
 
-        fields.add(fieldLabel("Action name"));
-        fields.add(nameField);
+        timedCheck.setForeground(IrlXpUi.TEXT);
+        timedCheck.setOpaque(false);
+        timedCheck.addActionListener(e -> refreshTimedState());
 
-        fields.add(fieldLabel("Units"));
-        fields.add(unitCombo);
+        // Disabled formatted fields keep their background, so the text colour is
+        // what tells the user the row is inert.
+        secondsPerUnitField.setDisabledTextColor(IrlXpUi.BORDER);
 
-        fields.add(fieldLabel("Seconds per unit"));
-        fields.add(secondsPerUnitField);
+        int row = 0;
+        row = addFieldRow(fields, row, fieldLabel("Action name"), nameField);
+        row = addFieldRow(fields, row, fieldLabel("Units"), unitCombo);
+        row = addFieldRow(fields, row, fieldLabel("Timed"), timedCheck);
+        row = addNoteRow(fields, row, IrlXpUi.wrappingNote(
+            "Timed actions bank XP while a timer runs. Untimed actions are"
+                + " benchmarks (XP per pound, per km) that you bank by logging"
+                + " completed units in the Actions tab.", 3));
 
-        fields.add(fieldLabel("Default XP per unit"));
+        row = addFieldRow(fields, row, secondsLabel, secondsPerUnitField);
+        row = addNoteRow(fields, row, IrlXpUi.wrappingNote(
+            "How many real seconds make up one unit: 60 for a unit of minutes,"
+                + " 3600 for hours. If your unit is already seconds, enter 1."
+                + " Untimed actions do not use this.", 3));
+
         defaultXpField.setValue(1L);
-        fields.add(defaultXpField);
+        row = addFieldRow(fields, row, fieldLabel("Default XP per unit"), defaultXpField);
 
         errorLabel.setForeground(IrlXpUi.DANGER);
-        fields.add(new JLabel());
-        fields.add(errorLabel);
+        addNoteRow(fields, row, errorLabel);
 
         panel.add(fields, BorderLayout.CENTER);
 
         return panel;
+    }
+
+    /** Adds a label/control pair on one grid row and returns the next row index. */
+    private int addFieldRow(JPanel fields, int row, JComponent label, JComponent control)
+    {
+        GridBagConstraints labelConstraints = new GridBagConstraints();
+        labelConstraints.gridx = 0;
+        labelConstraints.gridy = row;
+        labelConstraints.anchor = GridBagConstraints.WEST;
+        labelConstraints.insets = new Insets(4, 0, 4, 8);
+        fields.add(label, labelConstraints);
+
+        GridBagConstraints controlConstraints = new GridBagConstraints();
+        controlConstraints.gridx = 1;
+        controlConstraints.gridy = row;
+        controlConstraints.weightx = 1;
+        controlConstraints.fill = GridBagConstraints.HORIZONTAL;
+        controlConstraints.insets = new Insets(4, 0, 4, 0);
+        fields.add(control, controlConstraints);
+
+        return row + 1;
+    }
+
+    /** Adds a full-width note spanning both columns and returns the next row index. */
+    private int addNoteRow(JPanel fields, int row, JComponent note)
+    {
+        GridBagConstraints constraints = new GridBagConstraints();
+        constraints.gridx = 0;
+        constraints.gridy = row;
+        constraints.gridwidth = 2;
+        constraints.weightx = 1;
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.anchor = GridBagConstraints.WEST;
+        constraints.insets = new Insets(0, 0, 8, 0);
+        fields.add(note, constraints);
+
+        return row + 1;
+    }
+
+    /**
+     * Greys out the seconds-per-unit row for untimed actions.
+     *
+     * <p>RuneLite's sidebar cannot rebuild its layout cleanly on a toggle, so the
+     * row always stays in place and is simply made inert; an untimed action needs
+     * no value there at all.</p>
+     */
+    private void refreshTimedState()
+    {
+        boolean timed = timedCheck.isSelected();
+        secondsPerUnitField.setEnabled(timed);
+        secondsLabel.setForeground(timed ? IrlXpUi.MUTED_TEXT : IrlXpUi.BORDER);
+
+        if (timed)
+        {
+            secondsPerUnitField.setValue(lastTimedSeconds > 0 ? lastTimedSeconds : DEFAULT_SECONDS_PER_UNIT);
+        }
+        else
+        {
+            long current = parseLong(secondsPerUnitField);
+            if (current > 0)
+            {
+                lastTimedSeconds = current;
+            }
+            // Blank rather than greyed-out digits, so nothing looks like it was
+            // taken into account when the action is saved.
+            secondsPerUnitField.setValue(null);
+        }
     }
 
     private JPanel buildSkillsPanel()
@@ -216,11 +317,18 @@ class ActionEditorDialog extends JDialog
             return null;
         }
 
-        long secondsPerUnit = parseLong(secondsPerUnitField);
-        if (secondsPerUnit <= 0)
+        // Only timed actions need a duration. For untimed ones the field is
+        // disabled and its value is deliberately ignored.
+        boolean timed = timedCheck.isSelected();
+        long secondsPerUnit = 0L;
+        if (timed)
         {
-            markInvalid(secondsPerUnitField, "Seconds per unit must be positive.");
-            return null;
+            secondsPerUnit = parseLong(secondsPerUnitField);
+            if (secondsPerUnit <= 0)
+            {
+                markInvalid(secondsPerUnitField, "Seconds per unit must be positive for a timed action.");
+                return null;
+            }
         }
 
         Map<Skill, Long> mappings = new EnumMap<>(Skill.class);
@@ -254,6 +362,7 @@ class ActionEditorDialog extends JDialog
             .name(name)
             .unitName(unitName)
             .secondsPerUnit(secondsPerUnit)
+            .timed(timed)
             .defaultXpPerUnit(defaultXp)
             .skillMappings(mappings)
             .build();
@@ -263,7 +372,13 @@ class ActionEditorDialog extends JDialog
     {
         nameField.setText(action.getName());
         unitCombo.setSelectedItem(action.getUnitName());
-        secondsPerUnitField.setValue(action.getSecondsPerUnit());
+        timedCheck.setSelected(action.isTimed());
+        // refreshTimedState() reads this back into the field; an untimed action
+        // has no stored duration, so the default stands if it is re-timed.
+        if (action.getSecondsPerUnit() > 0)
+        {
+            lastTimedSeconds = action.getSecondsPerUnit();
+        }
         defaultXpField.setValue(action.getDefaultXpPerUnit());
 
         Map<Skill, Long> mappings = action.getSkillMappings() == null
@@ -298,18 +413,26 @@ class ActionEditorDialog extends JDialog
         skillRows.values().forEach(row -> row.syncWithDefault(defaultXp));
     }
 
+    /**
+     * Pre-fills the duration when the user picks a unit they have used before.
+     *
+     * <p>Only applies to timed actions, and only for units that actually carry a
+     * duration: units introduced by untimed actions are stored with zero seconds,
+     * which is not a value the seconds field may hold.</p>
+     */
     private void populateSavedUnitDuration()
     {
         Object selected = unitCombo.getSelectedItem();
-        if (selected == null)
+        if (selected == null || !timedCheck.isSelected())
         {
             return;
         }
 
         String selectedName = selected.toString().trim();
         savedUnits.forEach((name, seconds) -> {
-            if (name.equalsIgnoreCase(selectedName))
+            if (seconds != null && seconds > 0 && name.equalsIgnoreCase(selectedName))
             {
+                lastTimedSeconds = seconds;
                 secondsPerUnitField.setValue(seconds);
             }
         });
