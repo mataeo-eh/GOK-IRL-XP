@@ -14,8 +14,29 @@ import net.runelite.client.ui.overlay.components.LineComponent;
 import net.runelite.client.ui.overlay.components.TitleComponent;
 import net.runelite.client.util.QuantityFormatter;
 
+/**
+ * The on-screen banked XP and timer summary.
+ *
+ * <p>Sizing is handled entirely by RuneLite, so this plugin adds no hotkey or
+ * config of its own for it. {@link OverlayPanel} already marks itself resizable,
+ * and the client's own "Drag hotkey" (ALT by default, rebindable in RuneLite's
+ * settings) is what puts overlays into management mode: holding it and dragging
+ * an edge resizes this panel, right-clicking resets it, and {@code OverlayManager}
+ * persists whatever size the user lands on. All of that only works if
+ * {@link #render(Graphics2D)} hands off to {@code super}, which applies the
+ * user's chosen size to the panel — see the note there.</p>
+ */
 class GokIrlBankedXpOverlay extends OverlayPanel
 {
+    /**
+     * Default width before the user resizes anything. Wider than RuneLite's
+     * 129px standard because skill rows pair a name with a formatted XP total.
+     */
+    private static final int DEFAULT_WIDTH = 240;
+
+    /** Floor for user resizing, small enough to tuck away but still readable. */
+    private static final int MINIMUM_SIZE = 100;
+
     private final GokIrlBankedXpPlugin plugin;
     private final TimerManager timerManager;
 
@@ -26,14 +47,17 @@ class GokIrlBankedXpOverlay extends OverlayPanel
         this.timerManager = timerManager;
         setPosition(OverlayPosition.TOP_LEFT);
         setLayer(OverlayLayer.ABOVE_SCENE);
-        panelComponent.setPreferredSize(new Dimension(240, 0));
+        panelComponent.setPreferredSize(new Dimension(DEFAULT_WIDTH, 0));
+        setMinimumSize(MINIMUM_SIZE);
+        // Scales the font with the panel so a shrunken overlay stays legible and
+        // a widened one does not look sparse. This is what keeps the overlay
+        // looking right across fixed, resizable, and stretched screen modes.
+        setDynamicFont(true);
     }
 
     @Override
     public Dimension render(Graphics2D graphics)
     {
-        panelComponent.getChildren().clear();
-
         GokIrlBankedXpPlugin.BankedXpSnapshot snapshot = plugin.getCurrentSnapshot();
         if (snapshot != null && snapshot.hasData())
         {
@@ -96,6 +120,11 @@ class GokIrlBankedXpOverlay extends OverlayPanel
             }
         }
 
-        return panelComponent.render(graphics);
+        // Must go through super, not panelComponent.render(): OverlayPanel.render()
+        // is what copies the overlay's user-chosen preferred size onto the panel
+        // (and clears the children afterwards). Rendering the panel directly
+        // skipped that, which is why the overlay stayed pinned at its default
+        // width no matter how it was dragged or which screen mode was in use.
+        return super.render(graphics);
     }
 }

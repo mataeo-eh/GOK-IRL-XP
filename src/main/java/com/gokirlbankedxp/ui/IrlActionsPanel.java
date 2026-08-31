@@ -66,10 +66,12 @@ public class IrlActionsPanel extends JPanel
     // "Log completed" controls: bank XP for work already finished, for actions
     // that have no timer to run (and, if the user prefers, for ones that do).
     private final JComboBox<IrlAction> logActionSelector = new JComboBox<>();
-    private final JLabel logUnitsLabel = IrlXpUi.mutedLabel("UNITS EACH TIME");
+    private final JLabel logUnitsLabel = IrlXpUi.mutedLabel("UNITS IN ONE GO");
     private final JFormattedTextField logUnitsField = new JFormattedTextField(IrlXpUi.positiveLongFormatter());
     private final JFormattedTextField logRepetitionsField = new JFormattedTextField(IrlXpUi.positiveLongFormatter());
-    private final JTextArea logPreview = IrlXpUi.wrappingNote(" ", 2);
+    // Three rows: the preview spells out the total and the resulting XP on
+    // separate lines, and a multi-skill action needs room to wrap.
+    private final JTextArea logPreview = IrlXpUi.wrappingNote(" ", 3);
     private final JButton logButton = new JButton("BANK THIS XP");
 
     @Inject
@@ -260,6 +262,13 @@ public class IrlActionsPanel extends JPanel
      * units one go was worth and how many times it was done, and the plugin does
      * the arithmetic. It is what makes benchmark actions ("1 XP per pound
      * lifted") usable, since those never run on a clock.</p>
+     *
+     * <p>The two number fields multiply, which testers consistently failed to
+     * infer from the controls alone. Every label here therefore states what it
+     * wants in plain words, a worked example sits above the fields, and the
+     * preview below is written as a sentence rather than a bare arrow — the
+     * arithmetic is trivial once you see it, but nothing on screen used to say
+     * that it was happening at all.</p>
      */
     private JPanel buildLogControls()
     {
@@ -279,17 +288,23 @@ public class IrlActionsPanel extends JPanel
         logRepetitionsField.addPropertyChangeListener("value", evt -> refreshLogPreview());
         logUnitsField.setValue(1L);
         logRepetitionsField.setValue(1L);
+        logUnitsField.setToolTipText("How many units one round of this action was worth, e.g. 20 push-ups per set");
+        logRepetitionsField.setToolTipText("How many rounds you did, e.g. 3 sets. Leave at 1 if you did it all in one go");
 
         IrlXpUi.stylePrimaryButton(logButton);
         logButton.addActionListener(e -> onLogCompletion());
 
         JPanel rows = new JPanel(new GridLayout(0, 1, 0, 6));
         rows.setOpaque(false);
-        rows.add(IrlXpUi.mutedLabel("ACTION"));
+        rows.add(IrlXpUi.wrappingNote(
+            "Bank XP for work you already finished. Say how much you did in one go, "
+                + "then how many times you repeated it. Did it all at once? Leave "
+                + "\"times repeated\" at 1.", 4));
+        rows.add(IrlXpUi.mutedLabel("WHICH ACTION"));
         rows.add(logActionSelector);
         rows.add(logUnitsLabel);
         rows.add(logUnitsField);
-        rows.add(IrlXpUi.mutedLabel("HOW MANY TIMES"));
+        rows.add(IrlXpUi.mutedLabel("TIMES REPEATED"));
         rows.add(logRepetitionsField);
         rows.add(logPreview);
         rows.add(logButton);
@@ -448,12 +463,17 @@ public class IrlActionsPanel extends JPanel
         refreshActiveTimers(false);
     }
 
-    /** Relabels the units field with the selected action's own unit name. */
+    /**
+     * Relabels the units field with the selected action's own unit name.
+     *
+     * <p>Naming the unit is what makes the row concrete — "PUSH-UPS IN ONE GO"
+     * asks a question the user can answer, where "UNITS" does not.</p>
+     */
     private void onLogSelectionChanged()
     {
         IrlAction action = (IrlAction) logActionSelector.getSelectedItem();
         String unit = action == null ? "UNITS" : action.getUnitName().toUpperCase(Locale.US);
-        logUnitsLabel.setText(unit + " EACH TIME");
+        logUnitsLabel.setText(unit + " IN ONE GO");
         refreshLogPreview();
     }
 
@@ -473,14 +493,21 @@ public class IrlActionsPanel extends JPanel
         if (award.isEmpty())
         {
             logPreview.setForeground(IrlXpUi.MUTED_TEXT);
-            logPreview.setText("Enter how many units and how many times.");
+            logPreview.setText("Fill in both boxes above to see what this will bank.");
             logButton.setEnabled(false);
             return;
         }
 
+        // Written out as two labelled lines rather than "60 push-ups -> Strength
+        // +300": the first line shows the multiplication's result so the user can
+        // check it, the second names it as the XP the button is about to bank.
         ActionLogManager.LoggedAward value = award.get();
         logPreview.setForeground(IrlXpUi.SUCCESS);
-        logPreview.setText(String.format("%s %s -> %s",
+        logPreview.setText(String.format(
+            Locale.US,
+            // A literal \n, not %n: JTextArea treats \n as its line break on every
+            // platform, while %n would inject a stray \r on Windows.
+            "That is %s %s in total.\nBanks: %s",
             QuantityFormatter.formatNumber(value.getTotalUnits()),
             value.getUnitName(),
             describeAward(value)));
@@ -503,7 +530,8 @@ public class IrlActionsPanel extends JPanel
         if (award.isEmpty())
         {
             JOptionPane.showMessageDialog(this,
-                "Enter a positive number of units and repetitions, then try again.",
+                "Both boxes need a positive whole number. Enter how much you did in one go, "
+                    + "and how many times you repeated it.",
                 "Nothing banked", JOptionPane.WARNING_MESSAGE);
             refreshActionList();
             return;
@@ -511,11 +539,13 @@ public class IrlActionsPanel extends JPanel
 
         ActionLogManager.LoggedAward value = award.get();
         JOptionPane.showMessageDialog(this,
-            String.format("Banked %s for %s %s of %s.",
-                describeAward(value),
+            String.format(
+                Locale.US,
+                "Logged %s: %s %s in total.\nBanked %s.",
+                value.getActionName(),
                 QuantityFormatter.formatNumber(value.getTotalUnits()),
                 value.getUnitName(),
-                value.getActionName()),
+                describeAward(value)),
             "XP banked", JOptionPane.INFORMATION_MESSAGE);
     }
 

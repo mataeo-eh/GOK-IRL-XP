@@ -3,6 +3,7 @@ package com.gokirlbankedxp;
 import com.google.common.base.Strings;
 import com.google.common.math.LongMath;
 import com.google.inject.Provides;
+import com.gokirlbankedxp.service.DepletionForecaster;
 import com.gokirlbankedxp.service.IrlActionManager;
 import com.gokirlbankedxp.service.TimerManager;
 import java.awt.Color;
@@ -26,6 +27,7 @@ import net.runelite.api.GameState;
 import net.runelite.api.Skill;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.StatChanged;
+import net.runelite.client.Notifier;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
@@ -59,7 +61,16 @@ public class GokIrlBankedXpPlugin extends Plugin
     private final Object dataLock = new Object();
     private final Map<Skill, Long> storedXp = new EnumMap<>(Skill.class);
     private final Map<Skill, Integer> lastKnownXp = new EnumMap<>(Skill.class);
+    /** Skills already warned about crossing {@code lowXpThreshold}, so the chat line is sent once. */
     private final Set<Skill> warnedSkills = EnumSet.noneOf(Skill.class);
+    /**
+     * Skills already warned about imminent depletion.
+     *
+     * <p>Kept separate from {@link #warnedSkills} because the two warnings answer
+     * different questions — a fixed XP threshold versus "how many more actions can
+     * you take" — and each has to be able to re-arm without silencing the other.</p>
+     */
+    private final Set<Skill> depletionWarnedSkills = EnumSet.noneOf(Skill.class);
 
     private volatile BankedXpSnapshot currentSnapshot = BankedXpSnapshot.empty();
     private NavigationButton navigationButton;
@@ -93,6 +104,12 @@ public class GokIrlBankedXpPlugin extends Plugin
 
     @Inject
     private TimerManager timerManager;
+
+    @Inject
+    private DepletionForecaster depletionForecaster;
+
+    @Inject
+    private Notifier notifier;
 
     @Provides
     GokIrlBankedXpConfig provideConfig(ConfigManager configManager)
@@ -141,11 +158,16 @@ public class GokIrlBankedXpPlugin extends Plugin
             clientToolbar.removeNavigation(navigationButton);
             navigationButton = null;
         }
+        // Learned XP-drop rates are session state, not saved data: a reloaded
+        // plugin relearns them from the first few drops rather than acting on
+        // rates from whatever the user was training hours ago.
+        depletionForecaster.clear();
         synchronized (dataLock)
         {
             storedXp.clear();
             lastKnownXp.clear();
             warnedSkills.clear();
+            depletionWarnedSkills.clear();
             currentSnapshot = BankedXpSnapshot.empty();
         }
 
@@ -163,6 +185,7 @@ public class GokIrlBankedXpPlugin extends Plugin
 
         int newXp = event.getXp();
         boolean changed = false;
+        String depletionWarning = null;
 
         synchronized (dataLock)
         {
@@ -179,12 +202,86 @@ public class GokIrlBankedXpPlugin extends Plugin
             }
 
             changed = subtractXpLocked(skill, delta);
+            if (changed)
+            {
+                depletionWarning = evaluateDepletionLocked(skill, delta);
+            }
+        }
+
+        // Fired outside the lock on purpose: the notifier posts to the event bus
+        // and touches the client UI, and neither should run while this plugin's
+        // data lock is held.
+        if (depletionWarning != null)
+        {
+            notifier.notify(config.depletionNotification(), depletionWarning);
         }
 
         if (changed)
         {
             rebuildSnapshotAndNotify();
         }
+    }
+
+    /**
+     * Decides whether this XP drop means the skill is about to run dry.
+     *
+     * <p>Feeds the drop to {@link DepletionForecaster} and compares what the next
+     * {@code depletionWarningActions} actions are predicted to cost against what
+     * is actually left. Called with {@link #dataLock} held so the remaining total
+     * it reads is the one this drop just produced.</p>
+     *
+     * @return the message to notify with, or null when nothing should be sent
+     */
+    private String evaluateDepletionLocked(Skill skill, long delta)
+    {
+        int window = Math.max(0, config.depletionWarningActions());
+        if (window <= 0)
+        {
+            // Feature switched off: forget any standing warning so re-enabling it
+            // starts clean rather than staying silent on an old flag.
+            depletionWarnedSkills.remove(skill);
+            return null;
+        }
+
+        depletionForecaster.recordDrop(skill, delta, window);
+
+        long remaining = storedXp.getOrDefault(skill, 0L);
+        if (remaining <= 0)
+        {
+            // Already spent. There is nothing left to warn about, and re-arming
+            // here means the next top-up gets a fresh warning.
+            depletionWarnedSkills.remove(skill);
+            return null;
+        }
+
+        long forecast = depletionForecaster.forecast(skill, window);
+        if (forecast <= 0 || remaining > forecast)
+        {
+            // Either no rate learned yet, or comfortably more than the next
+            // `window` actions will consume. Re-arm so a later dip warns again.
+            depletionWarnedSkills.remove(skill);
+            return null;
+        }
+
+        if (!depletionWarnedSkills.add(skill))
+        {
+            // Already warned and the balance has not recovered since.
+            return null;
+        }
+
+        // Turn "XP left" back into "actions left" using the same samples the
+        // forecast came from, because that is the unit the warning promises.
+        long averageDrop = depletionForecaster.averageDrop(skill);
+        long actionsLeft = averageDrop <= 0 ? window : Math.max(1L, remaining / averageDrop);
+
+        return String.format(
+            Locale.US,
+            "%s banked XP is nearly gone: %s left, about %d more action%s.",
+            skill.getName(),
+            QuantityFormatter.formatNumber(remaining),
+            actionsLeft,
+            actionsLeft == 1 ? "" : "s"
+        );
     }
 
     @Subscribe
@@ -212,6 +309,15 @@ public class GokIrlBankedXpPlugin extends Plugin
         {
             needsRefresh = true;
         }
+        else if ("depletionWarningActions".equals(event.getKey()))
+        {
+            // A new window means a new prediction, so any standing warning is
+            // stale. Re-arm rather than leaving skills silenced under the old one.
+            synchronized (dataLock)
+            {
+                depletionWarnedSkills.clear();
+            }
+        }
         else if (STORAGE_KEY.equals(event.getKey()))
         {
             // Config manager changed outside the panel; reload.
@@ -238,10 +344,80 @@ public class GokIrlBankedXpPlugin extends Plugin
             // wrapping negative, which would read as "no XP banked".
             storedXp.merge(skill, amount, LongMath::saturatedAdd);
             warnedSkills.remove(skill);
+            depletionWarnedSkills.remove(skill);
             persistStoredXpLocked();
         }
 
         rebuildSnapshotAndNotify();
+    }
+
+    /**
+     * Takes banked XP back out of a skill, for corrections only.
+     *
+     * <p>This is the undo for a mistyped or misdirected deposit, and it is
+     * deliberately <em>not</em> the inverse of {@link #addManualXp}: it can only
+     * ever reduce a balance the user already has, never create a negative one.
+     * The caller asks for an amount and is told what was actually removed, so a
+     * request larger than the balance empties the skill instead of failing or
+     * going below zero.</p>
+     *
+     * <p>A correction is not gameplay consumption, so it is kept out of the
+     * warning machinery entirely: no low-XP chat line, no depletion flash, and no
+     * sample handed to {@link DepletionForecaster} — an edit the user made in the
+     * sidebar says nothing about what an in-game action costs.</p>
+     *
+     * @return how much was actually removed; 0 when the skill has no banked XP
+     */
+    long removeManualXp(Skill skill, long amount)
+    {
+        if (skill == null || amount <= 0)
+        {
+            return 0L;
+        }
+
+        long removed;
+        synchronized (dataLock)
+        {
+            long current = storedXp.getOrDefault(skill, 0L);
+            if (current <= 0)
+            {
+                return 0L;
+            }
+
+            removed = Math.min(amount, current);
+            long updated = current - removed;
+            if (updated <= 0)
+            {
+                storedXp.remove(skill);
+            }
+            else
+            {
+                storedXp.put(skill, updated);
+            }
+
+            // Re-arm both warnings rather than firing them: the balance changed
+            // because the user edited it, not because they trained.
+            warnedSkills.remove(skill);
+            depletionWarnedSkills.remove(skill);
+            persistStoredXpLocked();
+        }
+
+        rebuildSnapshotAndNotify();
+        return removed;
+    }
+
+    /** The authoritative banked total for a skill, used to bound removals. */
+    long getBankedXp(Skill skill)
+    {
+        if (skill == null)
+        {
+            return 0L;
+        }
+
+        synchronized (dataLock)
+        {
+            return storedXp.getOrDefault(skill, 0L);
+        }
     }
 
     /**
@@ -271,6 +447,7 @@ public class GokIrlBankedXpPlugin extends Plugin
         {
             storedXp.clear();
             warnedSkills.clear();
+            depletionWarnedSkills.clear();
 
             if (Strings.isNullOrEmpty(serialized))
             {
