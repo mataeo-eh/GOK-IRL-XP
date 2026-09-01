@@ -5,7 +5,9 @@ import com.google.common.math.LongMath;
 import com.google.inject.Provides;
 import com.gokirlbankedxp.service.DepletionForecaster;
 import com.gokirlbankedxp.service.IrlActionManager;
+import com.gokirlbankedxp.service.SkillLevelTracker;
 import com.gokirlbankedxp.service.TimerManager;
+import com.gokirlbankedxp.service.XpMultiplierManager;
 import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
@@ -109,6 +111,12 @@ public class GokIrlBankedXpPlugin extends Plugin
     private DepletionForecaster depletionForecaster;
 
     @Inject
+    private SkillLevelTracker skillLevelTracker;
+
+    @Inject
+    private XpMultiplierManager xpMultiplierManager;
+
+    @Inject
     private Notifier notifier;
 
     @Provides
@@ -130,6 +138,11 @@ public class GokIrlBankedXpPlugin extends Plugin
         clientToolbar.addNavigation(navigationButton);
 
         irlActionManager.loadActions();
+        // Both are read before the first deposit can happen. A level multiplier
+        // needs the saved tiers and the player's last observed level to resolve
+        // at all, and an unloaded manager would quietly bank everything at 1.00x.
+        skillLevelTracker.load();
+        xpMultiplierManager.load();
         // startUp() runs on the client thread, so every Swing mutation below has
         // to be handed to the EDT rather than performed inline.
         SwingUtilities.invokeLater(panel::refreshActions);
@@ -184,6 +197,13 @@ public class GokIrlBankedXpPlugin extends Plugin
         }
 
         int newXp = event.getXp();
+
+        // Fed to the tracker outside the data lock, and before anything else,
+        // because this is the client thread — the only place a live experience
+        // reading is available. Everything that banks XP runs on some other
+        // thread and reads the level back from the tracker instead of the client.
+        skillLevelTracker.recordExperience(skill, newXp);
+
         boolean changed = false;
         String depletionWarning = null;
 
@@ -331,24 +351,52 @@ public class GokIrlBankedXpPlugin extends Plugin
         }
     }
 
-    void addManualXp(Skill skill, long amount)
+    /**
+     * The one door XP comes in through, and therefore the one place the level
+     * multiplier is applied.
+     *
+     * <p>Every route into the bank — the sidebar's "bank a chunk" form, a running
+     * timer, and a logged completed session — lands here, so the multiplier is
+     * applied exactly once per deposit no matter which route was taken. Putting it
+     * anywhere further out would mean applying it in three places, and any preview
+     * that scaled the amount itself would double it.</p>
+     *
+     * <p>Removals are pointedly not the inverse of this; see
+     * {@link #removeManualXp}. A correction takes back a literal figure, because
+     * the user is undoing an amount they can see in their balance, not re-earning
+     * one.</p>
+     *
+     * @param amount the base XP earned, before any multiplier
+     * @return how much was actually banked after the multiplier, which is 0 when
+     *     the skill's current tier multiplies by zero
+     */
+    long addManualXp(Skill skill, long amount)
     {
         if (skill == null || amount <= 0)
         {
-            return;
+            return 0L;
+        }
+
+        long banked = xpMultiplierManager.applyTo(skill, amount);
+        if (banked <= 0)
+        {
+            // A deliberate 0x tier. Nothing is stored, and no warning state is
+            // touched, because the balance did not move.
+            return 0L;
         }
 
         synchronized (dataLock)
         {
             // Saturating: banked totals clamp at the long ceiling rather than
             // wrapping negative, which would read as "no XP banked".
-            storedXp.merge(skill, amount, LongMath::saturatedAdd);
+            storedXp.merge(skill, banked, LongMath::saturatedAdd);
             warnedSkills.remove(skill);
             depletionWarnedSkills.remove(skill);
             persistStoredXpLocked();
         }
 
         rebuildSnapshotAndNotify();
+        return banked;
     }
 
     /**
@@ -424,10 +472,14 @@ public class GokIrlBankedXpPlugin extends Plugin
      * Banks XP earned from an IRL action, whether accrued by a live timer or
      * logged after the fact. Public because it is the services' entry point;
      * {@link #addManualXp} stays package-private for the XP tab's direct entry.
+     *
+     * @param amount the action's base XP, before the skill's level multiplier
+     * @return how much was actually banked once the multiplier was applied, so
+     *     callers can report the real figure rather than the one they asked for
      */
-    public void addActionXp(Skill skill, long amount)
+    public long addActionXp(Skill skill, long amount)
     {
-        addManualXp(skill, amount);
+        return addManualXp(skill, amount);
     }
 
     BankedXpSnapshot getCurrentSnapshot()
@@ -499,13 +551,22 @@ public class GokIrlBankedXpPlugin extends Plugin
             return;
         }
 
+        Map<Skill, Integer> observed = new EnumMap<>(Skill.class);
+        for (Skill skill : TRACKABLE_SKILLS)
+        {
+            observed.put(skill, client.getSkillExperience(skill));
+        }
+
         synchronized (dataLock)
         {
-            for (Skill skill : TRACKABLE_SKILLS)
-            {
-                lastKnownXp.put(skill, client.getSkillExperience(skill));
-            }
+            lastKnownXp.putAll(observed);
         }
+
+        // Deliberately outside the lock: recording a level writes to config when
+        // it changes, and a config write is dispatched synchronously on the event
+        // bus. Keeping it out here means the plugin's own config listener never
+        // runs while this method holds the data lock.
+        observed.forEach(skillLevelTracker::recordExperience);
     }
 
     private boolean subtractXpLocked(Skill skill, long delta)

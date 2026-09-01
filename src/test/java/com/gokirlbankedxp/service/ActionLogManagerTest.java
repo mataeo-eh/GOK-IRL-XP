@@ -3,6 +3,7 @@ package com.gokirlbankedxp.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -116,9 +117,15 @@ class ActionLogManagerTest
 
         Fixture()
         {
+            // The real plugin returns what it banked, and the log manager reports
+            // that figure rather than its own estimate, so the mock has to answer
+            // the same way or every award reads as zero.
+            when(plugin.addActionXp(any(Skill.class), anyLong()))
+                .thenAnswer(invocation -> invocation.getArgument(1, Long.class));
+
             actionManager = new IrlActionManager(inMemoryConfigManager(new HashMap<>()), new Gson());
             actionManager.loadActions();
-            logManager = new ActionLogManager(actionManager, plugin);
+            logManager = new ActionLogManager(actionManager, plugin, new TestMultipliers().multiplierManager);
         }
 
         IrlAction createAction(String name, String unit, long xpPerUnit, Skill skill)

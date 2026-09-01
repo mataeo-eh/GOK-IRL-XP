@@ -12,6 +12,7 @@ import com.gokirlbankedxp.GokIrlBankedXpPlugin;
 import com.gokirlbankedxp.model.IrlAction;
 import com.gokirlbankedxp.service.ActionLogManager;
 import com.gokirlbankedxp.service.IrlActionManager;
+import com.gokirlbankedxp.service.TestMultipliers;
 import com.gokirlbankedxp.service.TimerManager;
 import com.google.gson.Gson;
 import java.awt.Component;
@@ -61,7 +62,7 @@ class IrlActionsPanelTest
         GokIrlBankedXpPlugin plugin = mock(GokIrlBankedXpPlugin.class);
         TimerManager timerManager =
             new TimerManager(configManager, actionManager, plugin, null, new Gson());
-        ActionLogManager logManager = new ActionLogManager(actionManager, plugin);
+        ActionLogManager logManager = new ActionLogManager(actionManager, plugin, new TestMultipliers().multiplierManager);
 
         AtomicReference<IrlActionsPanel> panelReference = new AtomicReference<>();
         SwingUtilities.invokeAndWait(() ->
@@ -95,7 +96,7 @@ class IrlActionsPanelTest
 
         AtomicReference<IrlActionsPanel> panelReference = new AtomicReference<>();
         SwingUtilities.invokeAndWait(() -> panelReference.set(new IrlActionsPanel(
-            actionManager, timerManager, new ActionLogManager(actionManager, plugin))));
+            actionManager, timerManager, new ActionLogManager(actionManager, plugin, new TestMultipliers().multiplierManager))));
         SwingUtilities.invokeAndWait(() -> { });
 
         assertNotNull(panelReference.get());

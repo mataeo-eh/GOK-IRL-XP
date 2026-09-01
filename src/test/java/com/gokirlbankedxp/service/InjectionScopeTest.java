@@ -3,6 +3,7 @@ package com.gokirlbankedxp.service;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import com.gokirlbankedxp.ui.IrlActionsPanel;
+import com.gokirlbankedxp.ui.XpMultipliersPanel;
 import javax.inject.Singleton;
 import org.junit.jupiter.api.Test;
 
@@ -54,5 +55,29 @@ class InjectionScopeTest
     void actionsPanelIsTheUiEntryPointForAllThreeServices()
     {
         assertNotNull(IrlActionsPanel.class);
+    }
+
+    @Test
+    void observedLevelsAreSharedByEveryInjectionPoint()
+    {
+        assertNotNull(SkillLevelTracker.class.getAnnotation(Singleton.class),
+            "SkillLevelTracker must be @Singleton; otherwise the plugin fills in one copy from the client"
+                + " while the multiplier service reads an empty one and resolves every skill at level 1.");
+    }
+
+    @Test
+    void multiplierThresholdsAreSharedByEveryInjectionPoint()
+    {
+        assertNotNull(XpMultiplierManager.class.getAnnotation(Singleton.class),
+            "XpMultiplierManager must be @Singleton; otherwise thresholds saved from the multipliers tab"
+                + " land in a manager the plugin never consults, and XP keeps banking at 1.00x.");
+    }
+
+    @Test
+    void multipliersPanelIsTheUiEntryPointForTheMultiplierServices()
+    {
+        assertNotNull(XpMultipliersPanel.class.getAnnotation(Singleton.class),
+            "XpMultipliersPanel must be @Singleton; it holds the visible list models, and a second"
+                + " unscoped instance would be UI state nothing ever refreshes.");
     }
 }

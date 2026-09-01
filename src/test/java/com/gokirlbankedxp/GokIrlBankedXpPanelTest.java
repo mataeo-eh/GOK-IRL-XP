@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.gokirlbankedxp.service.TestMultipliers;
 import java.awt.Component;
 import java.awt.Container;
 import java.util.ArrayList;
@@ -44,7 +45,7 @@ class GokIrlBankedXpPanelTest
         AtomicReference<JTextField> fieldReference = new AtomicReference<>();
 
         SwingUtilities.invokeAndWait(() -> {
-            GokIrlBankedXpPanel panel = new GokIrlBankedXpPanel(plugin);
+            GokIrlBankedXpPanel panel = new GokIrlBankedXpPanel(plugin, new TestMultipliers().multiplierManager);
             fieldReference.set(findTextField(panel));
         });
 
@@ -72,7 +73,7 @@ class GokIrlBankedXpPanelTest
         when(plugin.getBankedXp(Skill.COOKING)).thenReturn(500L);
 
         AtomicReference<GokIrlBankedXpPanel> panelReference = new AtomicReference<>();
-        SwingUtilities.invokeAndWait(() -> panelReference.set(new GokIrlBankedXpPanel(plugin)));
+        SwingUtilities.invokeAndWait(() -> panelReference.set(new GokIrlBankedXpPanel(plugin, new TestMultipliers().multiplierManager)));
 
         // Only Cooking is banked; Agility has nothing.
         panelReference.get().updateSnapshot(new GokIrlBankedXpPlugin.BankedXpSnapshot(
@@ -99,7 +100,7 @@ class GokIrlBankedXpPanelTest
         when(plugin.getTrackableSkills()).thenReturn(new Skill[]{Skill.AGILITY});
 
         AtomicReference<GokIrlBankedXpPanel> panelReference = new AtomicReference<>();
-        SwingUtilities.invokeAndWait(() -> panelReference.set(new GokIrlBankedXpPanel(plugin)));
+        SwingUtilities.invokeAndWait(() -> panelReference.set(new GokIrlBankedXpPanel(plugin, new TestMultipliers().multiplierManager)));
 
         panelReference.get().updateSnapshot(GokIrlBankedXpPlugin.BankedXpSnapshot.empty());
         SwingUtilities.invokeAndWait(() -> { });

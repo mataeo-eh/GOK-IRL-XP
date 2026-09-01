@@ -15,6 +15,7 @@ import java.awt.event.MouseEvent;
 import java.text.ParseException;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -35,6 +36,7 @@ import javax.swing.JTextArea;
 import javax.swing.Timer;
 import javax.swing.ListSelectionModel;
 import javax.swing.SwingUtilities;
+import net.runelite.api.Skill;
 import net.runelite.client.util.QuantityFormatter;
 
 /**
@@ -69,9 +71,10 @@ public class IrlActionsPanel extends JPanel
     private final JLabel logUnitsLabel = IrlXpUi.mutedLabel("UNITS IN ONE GO");
     private final JFormattedTextField logUnitsField = new JFormattedTextField(IrlXpUi.positiveLongFormatter());
     private final JFormattedTextField logRepetitionsField = new JFormattedTextField(IrlXpUi.positiveLongFormatter());
-    // Three rows: the preview spells out the total and the resulting XP on
-    // separate lines, and a multi-skill action needs room to wrap.
-    private final JTextArea logPreview = IrlXpUi.wrappingNote(" ", 3);
+    // Four rows: the preview spells out the total and the resulting XP on
+    // separate lines, a multi-skill action needs room to wrap, and a level
+    // multiplier adds a line saying what the figures were before it applied.
+    private final JTextArea logPreview = IrlXpUi.wrappingNote(" ", 4);
     private final JButton logButton = new JButton("BANK THIS XP");
 
     @Inject
@@ -507,10 +510,15 @@ public class IrlActionsPanel extends JPanel
             Locale.US,
             // A literal \n, not %n: JTextArea treats \n as its line break on every
             // platform, while %n would inject a stray \r on Windows.
-            "That is %s %s in total.\nBanks: %s",
+            "That is %s %s in total.\nBanks: %s%s",
             QuantityFormatter.formatNumber(value.getTotalUnits()),
             value.getUnitName(),
-            describeAward(value)));
+            describeAward(value),
+            // Only mentioned when it changed something, so a user with no
+            // multipliers set never sees a line about a feature they do not use.
+            value.isMultiplied()
+                ? "\n(level multipliers applied — was " + describeBase(value) + ")"
+                : ""));
         logButton.setEnabled(true);
     }
 
@@ -549,10 +557,21 @@ public class IrlActionsPanel extends JPanel
             "XP banked", JOptionPane.INFORMATION_MESSAGE);
     }
 
-    /** Renders an award as "Agility +6,250, Hitpoints +2,000". */
+    /** Renders what is actually banked, as "Agility +6,250, Hitpoints +2,000". */
     private static String describeAward(ActionLogManager.LoggedAward award)
     {
-        return award.getAwardedXp().entrySet().stream()
+        return describeXp(award.getAwardedXp());
+    }
+
+    /** Renders the pre-multiplier figures, shown only when a multiplier changed them. */
+    private static String describeBase(ActionLogManager.LoggedAward award)
+    {
+        return describeXp(award.getBaseXp());
+    }
+
+    private static String describeXp(Map<Skill, Long> xp)
+    {
+        return xp.entrySet().stream()
             .map(entry -> entry.getKey().getName() + " +" + QuantityFormatter.formatNumber(entry.getValue()))
             .collect(Collectors.joining(", "));
     }

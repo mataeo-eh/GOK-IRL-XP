@@ -1,5 +1,6 @@
 package com.gokirlbankedxp;
 
+import com.gokirlbankedxp.service.XpMultiplierManager;
 import com.gokirlbankedxp.ui.IrlXpUi;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
@@ -30,7 +31,10 @@ import javax.swing.JScrollPane;
 import javax.swing.ListSelectionModel;
 import javax.swing.SwingUtilities;
 import javax.swing.DefaultListCellRenderer;
+import javax.swing.JTextArea;
 import javax.swing.JTextField;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import net.runelite.api.Skill;
 import net.runelite.client.util.QuantityFormatter;
 
@@ -54,9 +58,16 @@ class GokIrlBankedXpPanel extends JPanel
     private static final String REMOVE_CARD = "REMOVE";
 
     private final GokIrlBankedXpPlugin plugin;
+    private final XpMultiplierManager multiplierManager;
 
     private final JComboBox<Skill> skillSelector;
     private final JTextField xpField;
+    /**
+     * Says what the typed amount will actually become once the skill's level
+     * multiplier is applied. Two rows because a multiplier of exactly zero needs
+     * a sentence of explanation, not a number.
+     */
+    private final JTextArea depositPreview = IrlXpUi.wrappingNote(" ", 2);
 
     private final JComboBox<Skill> removeSkillSelector = new JComboBox<>();
     private final JTextField removeXpField = new JTextField();
@@ -72,9 +83,10 @@ class GokIrlBankedXpPanel extends JPanel
     private final JLabel totalXpLabel = new JLabel("0 XP");
 
     @Inject
-    GokIrlBankedXpPanel(GokIrlBankedXpPlugin plugin)
+    GokIrlBankedXpPanel(GokIrlBankedXpPlugin plugin, XpMultiplierManager multiplierManager)
     {
         this.plugin = plugin;
+        this.multiplierManager = multiplierManager;
 
         setLayout(new BorderLayout(0, 10));
         setBackground(IrlXpUi.BACKGROUND);
@@ -109,7 +121,10 @@ class GokIrlBankedXpPanel extends JPanel
         gc.gridy = 3;
         skillSelector = new JComboBox<>(plugin.getTrackableSkills());
         skillSelector.setPreferredSize(new Dimension(1, 32));
-        skillSelector.setRenderer(new SkillNameCellRenderer());
+        skillSelector.setRenderer(IrlXpUi.skillNameRenderer());
+        // A different skill can be on a different multiplier tier, so the
+        // preview has to follow the selection, not just the typed amount.
+        skillSelector.addActionListener(e -> refreshDepositPreview());
         IrlXpUi.styleField(skillSelector);
         addForm.add(skillSelector, gc);
 
@@ -128,9 +143,34 @@ class GokIrlBankedXpPanel extends JPanel
         IrlXpUi.styleField(xpField);
         xpField.addActionListener(e -> onAddXp());
         xpField.addMouseListener(new FocusOnClick(xpField));
+        // Live rather than on submit: a multiplier that changes what you banked
+        // is only fair if you can see it before you press the button.
+        xpField.getDocument().addDocumentListener(new DocumentListener()
+        {
+            @Override
+            public void insertUpdate(DocumentEvent event)
+            {
+                refreshDepositPreview();
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent event)
+            {
+                refreshDepositPreview();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent event)
+            {
+                refreshDepositPreview();
+            }
+        });
         addForm.add(xpField, gc);
 
         gc.gridy = 6;
+        addForm.add(depositPreview, gc);
+
+        gc.gridy = 7;
         gc.insets = new Insets(8, 0, 0, 0);
         JButton addButton = new JButton("BANK XP");
         IrlXpUi.stylePrimaryButton(addButton);
@@ -173,7 +213,86 @@ class GokIrlBankedXpPanel extends JPanel
         balanceCard.add(scrollPane, BorderLayout.CENTER);
         add(balanceCard, BorderLayout.CENTER);
 
+        add(buildSettingsPointer(), BorderLayout.SOUTH);
+
         showMode(ADD_CARD);
+        refreshDepositPreview();
+    }
+
+    /**
+     * A permanent signpost to the settings that are not in this sidebar.
+     *
+     * <p>RuneLite owns the settings panel, and a plugin cannot open it or move
+     * its items into a sidebar tab. The warnings — the LOW marker, the chat
+     * message, and the red screen flash as a skill runs dry — therefore live
+     * somewhere the sidebar cannot show, and testers reliably failed to find
+     * them. Naming the exact route, and the exact section headings to look for,
+     * is the whole of what this note is for.</p>
+     */
+    private JPanel buildSettingsPointer()
+    {
+        JPanel card = IrlXpUi.card(new BorderLayout(0, 4));
+        card.add(IrlXpUi.mutedLabel("Warnings & screen flash"), BorderLayout.NORTH);
+        card.add(IrlXpUi.wrappingNote(
+            "Set how and when you are warned that a skill is running out in RuneLite's own settings: "
+                + "Configuration (the wrench) > IRL XP. Look for \"Low banked XP warning (chat)\" and "
+                + "\"Almost-out warning (red screen flash)\".", 4), BorderLayout.CENTER);
+        return card;
+    }
+
+    /**
+     * Restates the typed deposit as the amount that will actually be banked.
+     *
+     * <p>Silent about the multiplier when there is none in force, so a user who
+     * never touched the feature never sees a line about it. When one is in force
+     * this is the only warning that "500" is about to become something else, and
+     * it deliberately shows the same figure the plugin will bank, computed by the
+     * same service, rather than a separately derived estimate.</p>
+     */
+    private void refreshDepositPreview()
+    {
+        Skill selected = (Skill) skillSelector.getSelectedItem();
+        long typed = parsePositiveXp(xpField.getText());
+
+        if (selected == null)
+        {
+            depositPreview.setText(" ");
+            return;
+        }
+
+        double multiplier = multiplierManager.currentMultiplier(selected);
+        if (multiplier == XpMultiplierManager.NEUTRAL_MULTIPLIER)
+        {
+            depositPreview.setText(" ");
+            return;
+        }
+
+        if (multiplier == 0.0)
+        {
+            depositPreview.setText(String.format(
+                Locale.US,
+                "%s is set to 0.00x at your level, so nothing would be banked. Change it on the "
+                    + "LEVEL MULTIPLIERS tab.",
+                selected.getName()));
+            return;
+        }
+
+        if (typed <= 0)
+        {
+            depositPreview.setText(String.format(
+                Locale.US,
+                "%s banks at %s right now.",
+                selected.getName(),
+                IrlXpUi.formatMultiplier(multiplier)));
+            return;
+        }
+
+        depositPreview.setText(String.format(
+            Locale.US,
+            "Banks as %s XP (%s at %s).",
+            QuantityFormatter.formatNumber(XpMultiplierManager.scale(typed, multiplier)),
+            IrlXpUi.formatMultiplier(multiplier),
+            selected.getName()));
     }
 
     /** The Add/Remove switch, styled like the sidebar's own tab strip. */
@@ -250,7 +369,7 @@ class GokIrlBankedXpPanel extends JPanel
 
         gc.gridy = 3;
         removeSkillSelector.setPreferredSize(new Dimension(1, 32));
-        removeSkillSelector.setRenderer(new SkillNameCellRenderer());
+        removeSkillSelector.setRenderer(IrlXpUi.skillNameRenderer());
         removeSkillSelector.addActionListener(e -> refreshRemoveBalanceLabel());
         IrlXpUi.styleField(removeSkillSelector);
         removeForm.add(removeSkillSelector, gc);
@@ -287,6 +406,9 @@ class GokIrlBankedXpPanel extends JPanel
         SwingUtilities.invokeLater(() -> {
             skillListModel.clear();
             refreshRemovableSkills(snapshot);
+            // A snapshot follows every XP change, and an XP change can be the
+            // level-up that moves this skill onto a different multiplier tier.
+            refreshDepositPreview();
 
             if (snapshot == null || !snapshot.hasData())
             {
@@ -524,25 +646,4 @@ class GokIrlBankedXpPanel extends JPanel
         }
     }
 
-    /**
-     * Shows a skill by its display name.
-     *
-     * <p>{@link Skill} does not override {@code toString()}, so the default
-     * renderer would show the raw enum constant ("RUNECRAFT") instead of the name
-     * the game uses ("Runecraft").</p>
-     */
-    private static class SkillNameCellRenderer extends DefaultListCellRenderer
-    {
-        @Override
-        public Component getListCellRendererComponent(
-            JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus)
-        {
-            super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
-            if (value instanceof Skill)
-            {
-                setText(((Skill) value).getName());
-            }
-            return this;
-        }
-    }
 }

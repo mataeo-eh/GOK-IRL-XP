@@ -10,15 +10,16 @@ Turn your real-life effort into RuneScape progress. Bank XP for any skill by log
 - See totals in the sidebar and on an overlay so you always know what’s left.
 
 ## Features
-- **Manual XP banking:** Add XP chunks to any skill from the “IRL XP” tab.
+- **Manual XP banking:** Add XP chunks to any skill from the “Banked XP” tab.
 - **Fix mistakes:** Remove banked XP you added to the wrong skill, or too much of. A balance can never go negative.
 - **Custom actions:** Define IRL activities with default XP rates and per-skill overrides.
 - **Timed or untimed:** Run an action on a clock, or make it a benchmark (XP per pound lifted, per km run) that you log after the fact.
 - **Log completed work:** Enter how much you did in one go and how many times you repeated it; the plugin does the arithmetic and banks the XP.
 - **Real-time timers:** Run multiple timers at once; pause, resume, or stop them anytime.
+- **Level multipliers:** Set your own level thresholds per skill so banked XP scales as you level. You choose how many thresholds, what level each starts at, and what it multiplies by.
 - **Overlay summaries:** View banked XP totals and active timers on-screen, in an overlay you can drag to any size.
 - **Depletion warning:** Flashes the screen red when a skill is a few more actions away from running out.
-- **Auto-save:** Actions, timers, and banked XP persist between RuneLite sessions.
+- **Auto-save:** Actions, timers, thresholds, and banked XP persist between RuneLite sessions.
 
 ## Testing the Unpublished Plugin
 
@@ -57,17 +58,35 @@ Never share or commit `~/.runelite/credentials.properties`. Delete it when you n
 
 ## Quick Start (5 Minutes)
 1. **Launch and enable** the plugin (see above).
-2. Open the **IRL Actions** tab (new sidebar button).
+2. Open the sidebar's **ACTIONS** tab.
 3. Click **New Action** and create “Walking” with a unit of `Minutes`, `60` seconds per unit, and `50 XP` to Agility (add Hitpoints 25 XP/min if you like). Leave **Timed** ticked.
 4. Select the action in the Timers section and click **Start Timer**. Watch the overlay for elapsed time and rates.
 5. Train that skill in-game; stored XP will drop as you gain real XP.
 6. For something you finished earlier, make an untimed action — “Running”, unit `km`, `250 XP` — then use **Log completed work** to enter what you did and bank it at once.
-7. Use the **IRL XP** tab any time to bank a one-off XP chunk without making an action.
+7. Use the **BANKED XP** tab any time to bank a one-off XP chunk without making an action.
+8. Optional: open the **LEVEL MULTIPLIERS** tab, pick a skill, and give it a threshold — say `2×` from level 70 — so your real-world effort is worth more as you level.
 
 ## Using the Plugin
 ### Panels
-- **IRL XP tab:** Quick manual XP banking and a summary of remaining banked XP.
-- **IRL Actions tab:** Create/edit/delete actions, log completed work to bank XP instantly, and start/stop/pause timers.
+Every tab is a button under the **IRL XP** title in the sidebar, and the line under the title always says what the tab you are looking at is for.
+
+- **Banked XP tab:** Quick manual XP banking, a summary of remaining banked XP, and a pointer to the warning settings.
+- **Actions tab:** Create/edit/delete actions, log completed work to bank XP instantly, and start/stop/pause timers.
+- **Level multipliers tab:** Set per-skill thresholds so banked XP scales with your in-game levels.
+
+### Where every setting lives
+| What you want to change | Where it is |
+|---|---|
+| Actions, units, XP rates | Sidebar → **ACTIONS** tab → **Action library** |
+| Timers | Sidebar → **ACTIONS** tab → Timers section |
+| Bank or remove XP by hand | Sidebar → **BANKED XP** tab |
+| Level multipliers, per skill | Sidebar → **LEVEL MULTIPLIERS** tab |
+| Low-XP chat warning | RuneLite Configuration (wrench) → **IRL XP** → *Low banked XP warning (chat)* |
+| Red screen flash as a skill runs out | RuneLite Configuration (wrench) → **IRL XP** → *Almost-out warning (red screen flash)* |
+| Turn all level multipliers on/off | RuneLite Configuration (wrench) → **IRL XP** → *Level multipliers* |
+| Overlay size and position | Drag it in-game with RuneLite's overlay drag key (**ALT** by default) |
+
+The RuneLite settings panel groups the plugin's options into three named sections, and each section says in plain language what the whole group controls. The **BANKED XP** tab carries a permanent note naming that route, because a plugin cannot open RuneLite's own settings panel for you.
 
 ### Creating Actions
 1. Click **New Action**.
@@ -99,17 +118,37 @@ For example, with “Running” at 250 XP/km: `12` km in one go, repeated `9` ti
 - Timers only run while RuneLite is open. They pause on shutdown and continue when you reopen the client.
 
 ### Manual XP Banking
-- Open the **IRL XP** tab, leave the switch on **Add XP**, choose a skill, enter an XP chunk, and click **Bank XP**.
+- Open the **BANKED XP** tab, leave the switch on **Add XP**, choose a skill, enter an XP chunk, and click **Bank XP**.
 - The overlay and panel will show the updated totals. XP is consumed automatically as you gain it in-game for that skill.
 - Only positive whole numbers are accepted. Typing a negative amount here will not reduce a balance — use **Remove XP** for that.
 
 ### Removing Banked XP
-Banked to the wrong skill, or fat-fingered an extra zero? Switch the **IRL XP** tab to **Remove XP**.
+Banked to the wrong skill, or fat-fingered an extra zero? Switch the **BANKED XP** tab to **Remove XP**.
 
 - The skill drop-down lists only skills that currently hold banked XP, so there is nothing to pick for a skill sitting at zero.
 - The line under it shows exactly how much that skill has banked; that amount is the most you can remove.
 - Enter the amount and click **Remove XP**. Entering more than is banked is rejected rather than silently clamped, and a balance can never end up negative.
 - Removing XP is treated as a correction, not as training: it will not trigger the low-XP chat warning or the depletion flash.
+
+### Level Multipliers
+Bank more — or less — XP as your in-game levels climb. Each skill has its own ladder of thresholds, set on the **LEVEL MULTIPLIERS** tab, and skills you never touch are unaffected.
+
+1. Open the **LEVEL MULTIPLIERS** tab and pick a skill. The line underneath shows that skill's level and what it is banking at right now.
+2. Click **Set thresholds**.
+3. At the top, choose **how many thresholds you want** for this skill. The rows below appear and disappear to match. `0` means no multiplier for that skill.
+4. For each threshold, set the **level it starts at** (1–126, virtual levels included) and the **multiplier** to bank at.
+5. The **What this means** panel restates your ladder as level bands as you type, and shows what 1,000 XP would bank at your current level. Save when it reads the way you want.
+
+**Thresholds never stack.** Only the highest one you have reached applies, and reaching it replaces the one below it completely — a 1.5× at 50, a 2× at 70 and a 3× at 90 is 3× at level 90, not 9×. Below your lowest threshold, XP is banked exactly as earned.
+
+The multiplier is any non-negative number. `2` doubles, `0.5` halves, `1` is no change, and `0` means that skill banks nothing at that level. A positive multiplier never rounds a deposit away to nothing — the smallest it can bank is 1 XP.
+
+It applies to every deposit: timers, logged completed work, and the manual **Bank XP** form. It does **not** apply to **Remove XP**, which always takes back the literal figure you type, and it does not change how fast in-game XP drains your balance — that is always one for one.
+
+- The **Bank XP** form shows what your typed amount will become before you press the button, and the **Log completed work** preview shows what the figures were before the multiplier applied.
+- **Skills with multipliers** at the bottom of the tab lists every skill you have set up, so you can see the whole picture without clicking through twenty-three skills.
+- Levels are remembered between sessions, so banking a run before you log in still uses your real level rather than treating you as level 1.
+- To switch the whole feature off without losing your thresholds, untick **Use level multipliers** in RuneLite's settings. The tab says so in red while it is off.
 
 ### Overlay
 - Shows total banked XP plus per-skill amounts (highlighted when under your low threshold).
@@ -132,11 +171,20 @@ The plugin can flash the screen red just before a skill’s banked XP runs out, 
 - Actions, custom units, timers, and banked XP save automatically via RuneLite’s config. No export is required to keep your progress.
 
 ## Configuration
-- **Low XP threshold:** Highlight skills in the overlay when banked XP falls below this number (default 500).
-- **Chat warning:** Send a one-time chat message per skill the first time it drops below the threshold.
-- **Warn N actions early:** How close to empty a skill has to get before the depletion warning fires, counted in that skill’s own in-game actions (default 5, `0` disables).
-- **Depletion warning:** How that warning reaches you. Flashes the screen red for two seconds and posts a chat line by default; the full RuneLite notification editor is behind it.
-- All action/timer data is stored automatically; there are no extra config switches for them.
+Open RuneLite's Configuration panel (the wrench) and pick **IRL XP**. The options are grouped into three named sections.
+
+**Low banked XP warning (chat)** — the quiet warning.
+- **Send the chat warning:** Turn the chat message off entirely. It is sent once per skill and only becomes possible again after that skill is topped up.
+- **Warn below this much XP:** The figure that counts as low (default 500). A skill at or under it is marked LOW in the sidebar and on the overlay.
+
+**Almost-out warning (red screen flash)** — the loud one.
+- **Warn me this many actions early:** How much notice you get, counted in that skill's own in-game actions (default 5). Set it to `0` to switch the whole almost-out warning off.
+- **How you are warned:** The full RuneLite notification editor. Flashes the screen red for two seconds and posts a chat line by default; open it to change the flash colour, add a sound or tray popup, or turn the flash off while keeping the chat line.
+
+**Level multipliers**
+- **Use level multipliers:** Turns every skill's thresholds on or off at once. Off keeps your thresholds and banks XP unchanged. The thresholds themselves are set per skill on the sidebar's **LEVEL MULTIPLIERS** tab.
+
+All action, timer, threshold and banked-XP data is stored automatically; there are no extra config switches for them.
 
 Overlay size and position are not config items — resize the overlay in place with RuneLite’s overlay drag key (see **Overlay** above) and it is saved for you.
 
@@ -145,10 +193,14 @@ Overlay size and position are not config items — resize the overlay in place w
 - **My action isn’t in the Timers drop-down.** It is untimed. Edit it and tick “Run this action on a timer”, or bank it through **Log completed work** instead.
 - **Can I run multiple timers?** Yes. Start as many as you need for different actions.
 - **How do I reset everything?** Disable the plugin and clear its settings in RuneLite’s configuration (search for “GOK IRL Banked XP”).
-- **Where do I see totals?** The overlay shows totals and active timers; the IRL XP tab lists banked XP by skill.
-- **I banked XP to the wrong skill. Can I undo it?** Yes — the **Remove XP** switch on the IRL XP tab takes it back out. Adding a negative amount is still refused; removal is the only way a balance goes down by hand.
+- **Where do I see totals?** The overlay shows totals and active timers; the BANKED XP tab lists banked XP by skill.
+- **I banked XP to the wrong skill. Can I undo it?** Yes — the **Remove XP** switch on the BANKED XP tab takes it back out. Adding a negative amount is still refused; removal is the only way a balance goes down by hand.
 - **Can banked XP go negative?** No. Training in-game stops subtracting at zero, and removal is capped at what the skill actually holds.
 - **Do I need to re-create actions each time?** No, actions persist. You can also edit or delete them later.
+- **Do level multipliers stack?** No. Only the highest threshold you have reached applies, and it replaces the lower ones entirely rather than compounding with them.
+- **Does a multiplier change how fast my banked XP drains?** No. In-game XP always consumes your balance one for one. Multipliers only affect what goes in.
+- **I banked XP and got a different number than I typed.** A level multiplier is in force for that skill. The **Bank XP** form shows the result before you press the button, and the **LEVEL MULTIPLIERS** tab shows what each skill is banking at.
+- **Where do I change the red screen flash?** RuneLite Configuration (the wrench) → **IRL XP** → *Almost-out warning (red screen flash)* → **How you are warned**.
 
 ## Troubleshooting
 - **Plugin doesn’t appear:** Confirm `~/.runelite/credentials.properties` exists, close the official client, and start the development client with `./gradlew run`.
@@ -163,7 +215,7 @@ Overlay size and position are not config items — resize the overlay in place w
 - Community help is also available in the RuneLite Discord (#plugin-support) for external plugins.
 
 ## Changelog (high level)
-- **Unreleased:** Remove banked XP to fix mistakes; overlay honours drag-resizing and scales its font; clearer labels and preview in “Log completed work”; screen flashes red when a skill is a few actions from empty.
+- **Unreleased:** Per-skill level multipliers with as many thresholds as you want; settings panel regrouped into named, self-describing sections and the sidebar now signposts where every option lives; remove banked XP to fix mistakes; overlay honours drag-resizing and scales its font; clearer labels and preview in “Log completed work”; screen flashes red when a skill is a few actions from empty.
 - **0.0.1:** Initial release with manual XP banking, custom actions, timers, overlay updates, and persistence.
 
 ## Extras

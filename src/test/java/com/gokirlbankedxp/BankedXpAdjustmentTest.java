@@ -14,6 +14,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.gokirlbankedxp.service.DepletionForecaster;
+import com.gokirlbankedxp.service.TestMultipliers;
 import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.Map;
@@ -216,6 +217,13 @@ class BankedXpAdjustmentTest
             set("configManager", inMemoryConfigManager(stored));
             set("client", mock(Client.class));
             set("panel", mock(GokIrlXpPanel.class));
+
+            // Real services rather than mocks: with no tiers configured they
+            // multiply by 1.00x, so every case below still measures the exact
+            // figures it deposits. XpMultiplierTest covers the scaled path.
+            TestMultipliers multipliers = new TestMultipliers();
+            set("skillLevelTracker", multipliers.levelTracker);
+            set("xpMultiplierManager", multipliers.multiplierManager);
         }
 
         /**

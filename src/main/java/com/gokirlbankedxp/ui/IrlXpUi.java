@@ -1,11 +1,13 @@
 package com.gokirlbankedxp.ui;
 
 import java.awt.Color;
+import java.awt.Component;
 import java.awt.Cursor;
 import java.awt.Font;
 import java.text.NumberFormat;
 import java.util.Locale;
 import javax.swing.BorderFactory;
+import javax.swing.DefaultListCellRenderer;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
@@ -13,9 +15,11 @@ import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
+import javax.swing.ListCellRenderer;
 import javax.swing.border.Border;
 import javax.swing.border.CompoundBorder;
 import javax.swing.text.NumberFormatter;
+import net.runelite.api.Skill;
 
 /**
  * Shared visual language for the IRL XP sidebar and editor.
@@ -169,4 +173,62 @@ public final class IrlXpUi
         return formatter;
     }
 
+    /**
+     * Creates the formatter used by every level-multiplier input.
+     *
+     * <p>Unlike {@link #positiveLongFormatter()} this accepts decimals and
+     * accepts zero, because both are meaningful here: {@code 1.5} is "half again
+     * as much XP" and {@code 0} is "this skill earns nothing at this level". Only
+     * negatives are impossible, since XP already banked must never be reduced by
+     * banking more. The ceiling is a typo guard, not a game rule.</p>
+     *
+     * @param maximum the largest multiplier the editor will accept
+     */
+    public static NumberFormatter multiplierFormatter(double maximum)
+    {
+        NumberFormat numberFormat = NumberFormat.getNumberInstance(Locale.US);
+        numberFormat.setGroupingUsed(false);
+        numberFormat.setMinimumFractionDigits(0);
+        // Two places is enough to express the multipliers people actually pick
+        // (1.5x, 2.25x) without inviting values that round to nothing in use.
+        numberFormat.setMaximumFractionDigits(2);
+        NumberFormatter formatter = new NumberFormatter(numberFormat);
+        formatter.setAllowsInvalid(true);
+        formatter.setMinimum(0.0);
+        formatter.setMaximum(maximum);
+        formatter.setValueClass(Double.class);
+        return formatter;
+    }
+
+    /** Renders a multiplier the way the editor and the sidebar both show it. */
+    public static String formatMultiplier(double multiplier)
+    {
+        return String.format(Locale.US, "%.2fx", multiplier);
+    }
+
+    /**
+     * A renderer that shows a {@link Skill} by its in-game display name.
+     *
+     * <p>{@code Skill} does not override {@code toString()}, so the default
+     * renderer shows the raw enum constant ("RUNECRAFT") rather than the name the
+     * game uses ("Runecraft"). Every skill drop-down in this plugin needs the
+     * same fix, so it lives here rather than being re-implemented per panel.</p>
+     */
+    public static ListCellRenderer<Object> skillNameRenderer()
+    {
+        return new DefaultListCellRenderer()
+        {
+            @Override
+            public Component getListCellRendererComponent(
+                JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus)
+            {
+                super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+                if (value instanceof Skill)
+                {
+                    setText(((Skill) value).getName());
+                }
+                return this;
+            }
+        };
+    }
 }
