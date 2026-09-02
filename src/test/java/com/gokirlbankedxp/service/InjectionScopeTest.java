@@ -58,6 +58,14 @@ class InjectionScopeTest
     }
 
     @Test
+    void bankedXpStoreIsSharedByEveryInjectionPoint()
+    {
+        assertNotNull(BankedXpStore.class.getAnnotation(Singleton.class),
+            "BankedXpStore must be @Singleton; it remembers the last config value it wrote so the"
+                + " plugin can ignore the ConfigChanged echo of its own saves.");
+    }
+
+    @Test
     void observedLevelsAreSharedByEveryInjectionPoint()
     {
         assertNotNull(SkillLevelTracker.class.getAnnotation(Singleton.class),

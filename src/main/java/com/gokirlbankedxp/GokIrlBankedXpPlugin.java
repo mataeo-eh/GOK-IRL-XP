@@ -1,8 +1,8 @@
 package com.gokirlbankedxp;
 
-import com.google.common.base.Strings;
 import com.google.common.math.LongMath;
 import com.google.inject.Provides;
+import com.gokirlbankedxp.service.BankedXpStore;
 import com.gokirlbankedxp.service.DepletionForecaster;
 import com.gokirlbankedxp.service.IrlActionManager;
 import com.gokirlbankedxp.service.SkillLevelTracker;
@@ -40,8 +40,6 @@ import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.util.QuantityFormatter;
 import net.runelite.client.ui.NavigationButton;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 @PluginDescriptor(
     name = "IRL XP",
@@ -50,11 +48,6 @@ import org.slf4j.LoggerFactory;
 )
 public class GokIrlBankedXpPlugin extends Plugin
 {
-    private static final Logger log = LoggerFactory.getLogger(GokIrlBankedXpPlugin.class);
-
-    private static final String STORAGE_KEY = "storedSkillXp";
-    private static final String ENTRY_DELIMITER = ",";
-    private static final String VALUE_DELIMITER = ":";
     // Skill.OVERALL is a deprecated null sentinel; Skill.values() already omits it.
     private static final Skill[] TRACKABLE_SKILLS = Skill.values();
 
@@ -82,9 +75,6 @@ public class GokIrlBankedXpPlugin extends Plugin
 
     @Inject
     private ClientThread clientThread;
-
-    @Inject
-    private ConfigManager configManager;
 
     @Inject
     private GokIrlBankedXpConfig config;
@@ -118,6 +108,13 @@ public class GokIrlBankedXpPlugin extends Plugin
 
     @Inject
     private Notifier notifier;
+
+    /**
+     * Where balances are saved and loaded. The plugin never touches config for
+     * banked XP directly; see {@link BankedXpStore} for why there are two copies.
+     */
+    @Inject
+    private BankedXpStore bankedXpStore;
 
     @Provides
     GokIrlBankedXpConfig provideConfig(ConfigManager configManager)
@@ -338,9 +335,17 @@ public class GokIrlBankedXpPlugin extends Plugin
                 depletionWarnedSkills.clear();
             }
         }
-        else if (STORAGE_KEY.equals(event.getKey()))
+        else if (BankedXpStore.XP_KEY.equals(event.getKey()))
         {
-            // Config manager changed outside the panel; reload.
+            // ConfigManager posts this synchronously for every write, including the
+            // store's own. Reloading on that echo re-parsed what was just saved and,
+            // worse, cleared the warn-once sets on every XP drop. Only a value this
+            // plugin did not write — a profile switch, a sync from the server, or a
+            // reset from the settings panel — is a reason to reload.
+            if (bankedXpStore.isOwnConfigValue(event.getNewValue()))
+            {
+                return;
+            }
             loadStoredXp();
             needsRefresh = true;
         }
@@ -492,55 +497,24 @@ public class GokIrlBankedXpPlugin extends Plugin
         return TRACKABLE_SKILLS.clone();
     }
 
+    /**
+     * Replaces the in-memory balances with whatever the store says is current.
+     *
+     * <p>Runs at start-up and whenever RuneLite changes the config copy from
+     * outside this plugin. The read happens inside the lock: a read taken before
+     * it could be overtaken by a deposit on another thread, and the stale result
+     * would then be written back over the deposit.</p>
+     */
     private void loadStoredXp()
     {
-        String serialized = configManager.getConfiguration(GokIrlBankedXpConfig.GROUP, STORAGE_KEY);
         synchronized (dataLock)
         {
+            Map<Skill, Long> loaded = bankedXpStore.load();
             storedXp.clear();
+            storedXp.putAll(loaded);
+            // Balances may have changed under the warnings' feet, so both re-arm.
             warnedSkills.clear();
             depletionWarnedSkills.clear();
-
-            if (Strings.isNullOrEmpty(serialized))
-            {
-                persistStoredXpLocked();
-                return;
-            }
-
-            for (String entry : serialized.split(ENTRY_DELIMITER))
-            {
-                if (entry.isEmpty() || !entry.contains(VALUE_DELIMITER))
-                {
-                    continue;
-                }
-
-                String[] parts = entry.split(VALUE_DELIMITER);
-                if (parts.length != 2)
-                {
-                    continue;
-                }
-
-                Skill skill = parseSkill(parts[0]);
-                if (skill == null)
-                {
-                    continue;
-                }
-
-                try
-                {
-                    long value = Long.parseLong(parts[1]);
-                    if (value > 0)
-                    {
-                        storedXp.put(skill, value);
-                    }
-                }
-                catch (NumberFormatException ex)
-                {
-                    log.debug("Unable to parse banked XP entry [{}]", entry, ex);
-                }
-            }
-
-            persistStoredXpLocked();
         }
     }
 
@@ -676,33 +650,10 @@ public class GokIrlBankedXpPlugin extends Plugin
         return new BankedXpSnapshot(total, List.copyOf(skills));
     }
 
+    /** Saves the current balances; called with {@link #dataLock} held after every change. */
     private void persistStoredXpLocked()
     {
-        String serialized = storedXp.entrySet().stream()
-            .filter(entry -> entry.getValue() > 0)
-            .sorted(Map.Entry.comparingByKey())
-            .map(entry -> entry.getKey().name() + VALUE_DELIMITER + entry.getValue())
-            .reduce((a, b) -> a + ENTRY_DELIMITER + b)
-            .orElse("");
-
-        configManager.setConfiguration(GokIrlBankedXpConfig.GROUP, STORAGE_KEY, serialized);
-    }
-
-    private static Skill parseSkill(String raw)
-    {
-        if (Strings.isNullOrEmpty(raw))
-        {
-            return null;
-        }
-
-        try
-        {
-            return Skill.valueOf(raw.toUpperCase(Locale.ROOT));
-        }
-        catch (IllegalArgumentException ex)
-        {
-            return null;
-        }
+        bankedXpStore.save(storedXp);
     }
 
     private static BufferedImage buildIcon()

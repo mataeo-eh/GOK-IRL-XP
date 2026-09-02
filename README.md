@@ -168,7 +168,10 @@ The plugin can flash the screen red just before a skill’s banked XP runs out, 
 - **Depletion warning** in the config is a standard RuneLite notification: click through it to change the flash colour and duration, or to add a sound, a tray notification, or focus stealing.
 
 ### Data Persistence
-- Actions, custom units, timers, and banked XP save automatically via RuneLite’s config. No export is required to keep your progress.
+- Actions, custom units, timers, and banked XP save automatically. No export is required to keep your progress.
+- Banked XP is saved in two places every time it changes: RuneLite’s config for the active profile, and a file of the plugin’s own at `~/.runelite/gok-irl-xp/banked-xp-<profile id>.json`. On start-up the plugin keeps whichever copy is newer and brings the other up to date.
+- The file exists because RuneLite’s config alone is not safe for this kind of data. When a profile is synced to a RuneLite account and one upload fails, RuneLite replaces the local config with the server’s copy on the next launch, and everything banked since the last successful upload is rolled back. The plugin’s own file is never touched by that sync, so your balances survive it.
+- Actions, units, timers and level multipliers still live only in RuneLite’s config.
 
 ## Configuration
 Open RuneLite's Configuration panel (the wrench) and pick **IRL XP**. The options are grouped into three named sections.
@@ -192,7 +195,8 @@ Overlay size and position are not config items — resize the overlay in place w
 - **Does XP accumulate when RuneLite is closed?** No. Timers pause when the client is closed and resume when you reopen. Logging completed work is unaffected — you can bank it whenever you next open the client.
 - **My action isn’t in the Timers drop-down.** It is untimed. Edit it and tick “Run this action on a timer”, or bank it through **Log completed work** instead.
 - **Can I run multiple timers?** Yes. Start as many as you need for different actions.
-- **How do I reset everything?** Disable the plugin and clear its settings in RuneLite’s configuration (search for “GOK IRL Banked XP”).
+- **How do I reset everything?** Banked XP: use **Remove XP** on the BANKED XP tab for each skill, or close RuneLite and delete `~/.runelite/gok-irl-xp/` along with the plugin’s settings in RuneLite’s configuration. Resetting only the RuneLite settings is not enough, because the plugin restores balances from its own file. Actions, units, timers and multipliers: clear the plugin’s settings in RuneLite’s configuration.
+- **My banked XP disappeared after restarting RuneLite.** Versions before this one kept banked XP only in RuneLite’s config, which RuneLite’s profile sync can roll back to an older copy. The plugin now also keeps its own file and restores from it. Balances lost before this version cannot be recovered; re-bank them, and they will stay.
 - **Where do I see totals?** The overlay shows totals and active timers; the BANKED XP tab lists banked XP by skill.
 - **I banked XP to the wrong skill. Can I undo it?** Yes — the **Remove XP** switch on the BANKED XP tab takes it back out. Adding a negative amount is still refused; removal is the only way a balance goes down by hand.
 - **Can banked XP go negative?** No. Training in-game stops subtracting at zero, and removal is capped at what the skill actually holds.
@@ -215,7 +219,7 @@ Overlay size and position are not config items — resize the overlay in place w
 - Community help is also available in the RuneLite Discord (#plugin-support) for external plugins.
 
 ## Changelog (high level)
-- **Unreleased:** Per-skill level multipliers with as many thresholds as you want; settings panel regrouped into named, self-describing sections and the sidebar now signposts where every option lives; remove banked XP to fix mistakes; overlay honours drag-resizing and scales its font; clearer labels and preview in “Log completed work”; screen flashes red when a skill is a few actions from empty.
+- **Unreleased:** Banked XP is now also saved to a plugin-owned file and restored from it when RuneLite’s config copy is older or missing, fixing balances vanishing after a restart; the low-XP and almost-out warnings genuinely fire once instead of re-arming on every XP drop. Per-skill level multipliers with as many thresholds as you want; settings panel regrouped into named, self-describing sections and the sidebar now signposts where every option lives; remove banked XP to fix mistakes; overlay honours drag-resizing and scales its font; clearer labels and preview in “Log completed work”; screen flashes red when a skill is a few actions from empty.
 - **0.0.1:** Initial release with manual XP banking, custom actions, timers, overlay updates, and persistence.
 
 ## Extras

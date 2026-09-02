@@ -224,6 +224,18 @@ public interface GokIrlBankedXpConfig extends Config
     }
 
     @ConfigItem(
+        keyName = "storedSkillXpSavedAt",
+        name = "Stored skill XP save time",
+        description = "When the banked XP above was last saved, so the plugin can tell "
+            + "whether this copy or its own local file is the newer one.",
+        hidden = true
+    )
+    default String storedSkillXpSavedAt()
+    {
+        return "";
+    }
+
+    @ConfigItem(
         keyName = "xpMultipliersJson",
         name = "Level multiplier thresholds",
         description = "Serialized representation of each skill's level multiplier thresholds.",

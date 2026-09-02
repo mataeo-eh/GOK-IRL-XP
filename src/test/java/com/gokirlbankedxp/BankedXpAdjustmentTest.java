@@ -13,8 +13,10 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.gokirlbankedxp.service.BankedXpStore;
 import com.gokirlbankedxp.service.DepletionForecaster;
 import com.gokirlbankedxp.service.TestMultipliers;
+import com.google.gson.Gson;
 import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.Map;
@@ -214,7 +216,9 @@ class BankedXpAdjustmentTest
             set("config", config);
             set("notifier", notifier);
             set("depletionForecaster", forecaster);
-            set("configManager", inMemoryConfigManager(stored));
+            // The real store, pointed at a throwaway directory, so these cases run
+            // the genuine save path without touching the developer's ~/.runelite.
+            set("bankedXpStore", new BankedXpStore(inMemoryConfigManager(stored), new Gson(), TestDataDir.create()));
             set("client", mock(Client.class));
             set("panel", mock(GokIrlXpPanel.class));
 
