@@ -22,7 +22,10 @@ import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.Map;
 import net.runelite.api.Client;
+import net.runelite.api.GameState;
 import net.runelite.api.Skill;
+import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.events.GameTick;
 import net.runelite.api.events.StatChanged;
 import net.runelite.client.Notifier;
 import net.runelite.client.config.ConfigManager;
@@ -299,6 +302,75 @@ class BankedXpAdjustmentTest
         verify(fixture.client, never()).addChatMessage(any(), anyString(), anyString(), any());
     }
 
+    /**
+     * A freshly started client reports 0 XP for every skill until it has
+     * processed the login's stat sync, which lands after LOGGED_IN is announced.
+     * The plugin used to take its baseline at LOGGED_IN, record those zeros, and
+     * then charge the sync's own StatChanged burst against the bank: a player
+     * with 15,185 Agility XP lost exactly 15,185 banked Agility XP on every
+     * restart, and skills with less banked than earned were wiped outright.
+     */
+    @Test
+    void loggingInOnAFreshClientDoesNotChargeTheBankForXpAlreadyEarned()
+    {
+        Fixture fixture = new Fixture();
+        fixture.plugin.addManualXp(Skill.AGILITY, 32_409L);
+        fixture.plugin.addManualXp(Skill.COOKING, 1_000L);
+
+        Map<Skill, Integer> totals = new HashMap<>();
+        totals.put(Skill.AGILITY, 15_185);
+        totals.put(Skill.COOKING, 40_000);
+        fixture.logInOnFreshClient(totals);
+
+        assertEquals(32_409L, fixture.plugin.getBankedXp(Skill.AGILITY));
+        assertEquals(1_000L, fixture.plugin.getBankedXp(Skill.COOKING));
+        // The bug also announced itself: a login-sized "drop" looked like the
+        // skill was about to run dry, so the depletion warning fired at once.
+        verify(fixture.notifier, never()).notify(any(Notification.class), anyString());
+
+        // Only XP earned after the login is charged, and only the difference.
+        fixture.gainXp(Skill.AGILITY, 50, 1);
+        assertEquals(32_359L, fixture.plugin.getBankedXp(Skill.AGILITY));
+    }
+
+    /**
+     * The two-tick wait is what RuneLite's own XP tracker uses, but the baseline
+     * must still never be taken from a client that has not received the sync.
+     * Every account has at least level 10 Hitpoints, so 0 Hitpoints XP is proof
+     * the sync has not landed, and the plugin keeps waiting rather than record it.
+     */
+    @Test
+    void baselineWaitsUntilTheClientActuallyHoldsTheSyncedXp()
+    {
+        Fixture fixture = new Fixture();
+        fixture.plugin.addManualXp(Skill.AGILITY, 32_409L);
+
+        fixture.plugin.onGameStateChanged(gameState(GameState.LOGGING_IN));
+        when(fixture.client.getGameState()).thenReturn(GameState.LOGGED_IN);
+        fixture.plugin.onGameStateChanged(gameState(GameState.LOGGED_IN));
+        // The wait runs out while the client still reports 0 XP everywhere.
+        fixture.plugin.onGameTick(new GameTick());
+        fixture.plugin.onGameTick(new GameTick());
+        fixture.plugin.onGameTick(new GameTick());
+
+        // Now the sync lands, then another tick passes.
+        fixture.syncSkill(Skill.HITPOINTS, 1_154);
+        fixture.syncSkill(Skill.AGILITY, 15_185);
+        fixture.plugin.onGameTick(new GameTick());
+
+        assertEquals(32_409L, fixture.plugin.getBankedXp(Skill.AGILITY));
+
+        fixture.gainXp(Skill.AGILITY, 50, 1);
+        assertEquals(32_359L, fixture.plugin.getBankedXp(Skill.AGILITY));
+    }
+
+    private static GameStateChanged gameState(GameState state)
+    {
+        GameStateChanged event = new GameStateChanged();
+        event.setGameState(state);
+        return event;
+    }
+
     /** A plugin wired to mocks, with banked XP kept in an in-memory config map. */
     private static final class Fixture
     {
@@ -329,6 +401,11 @@ class BankedXpAdjustmentTest
             set("bankedXpStore", new BankedXpStore(inMemoryConfigManager(stored), new Gson(), TestDataDir.create()));
             set("client", client);
             set("panel", mock(GokIrlXpPanel.class));
+            // The client reports whatever the in-game map holds, and 0 for a
+            // skill it has never been told about — exactly what a freshly started
+            // client returns before the login's stat sync has been processed.
+            when(client.getSkillExperience(any(Skill.class)))
+                .thenAnswer(invocation -> inGameXp.getOrDefault(invocation.getArgument(0), 0));
 
             // Real services rather than mocks: with no tiers configured they
             // multiply by 1.00x, so every case below still measures the exact
@@ -360,6 +437,41 @@ class BankedXpAdjustmentTest
                 inGameXp.put(skill, updated);
                 plugin.onStatChanged(new StatChanged(skill, updated, 99, 99));
             }
+        }
+
+        /**
+         * Replays a login on a client that was only just started, in the order
+         * the client delivers it: LOGGING_IN, then LOGGED_IN while every skill
+         * still reads 0 XP, then the server's stat sync as one {@link StatChanged}
+         * per skill, then the game ticks on which the client holds real figures.
+         *
+         * <p>Hitpoints is always part of the sync, because every account has it,
+         * so it is added when the caller's totals leave it out.</p>
+         */
+        void logInOnFreshClient(Map<Skill, Integer> totals)
+        {
+            inGameXp.clear();
+            when(client.getGameState()).thenReturn(GameState.LOGGING_IN);
+            plugin.onGameStateChanged(gameState(GameState.LOGGING_IN));
+            when(client.getGameState()).thenReturn(GameState.LOGGED_IN);
+            plugin.onGameStateChanged(gameState(GameState.LOGGED_IN));
+
+            Map<Skill, Integer> synced = new HashMap<>(totals);
+            synced.putIfAbsent(Skill.HITPOINTS, 1_154);
+            synced.forEach(this::syncSkill);
+
+            plugin.onGameTick(new GameTick());
+            plugin.onGameTick(new GameTick());
+        }
+
+        /**
+         * Delivers one skill of the login stat sync: the client's own figure is
+         * updated first, then the event announcing it fires, as in the client.
+         */
+        void syncSkill(Skill skill, int xp)
+        {
+            inGameXp.put(skill, xp);
+            plugin.onStatChanged(new StatChanged(skill, xp, 1, 1));
         }
 
         String storedXp()

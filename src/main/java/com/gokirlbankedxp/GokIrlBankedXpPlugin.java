@@ -28,9 +28,9 @@ import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Skill;
 import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.events.GameTick;
 import net.runelite.api.events.StatChanged;
 import net.runelite.client.Notifier;
-import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
@@ -61,7 +61,31 @@ public class GokIrlBankedXpPlugin extends Plugin
      * with nothing banked and nothing owed simply has no entry.
      */
     private final Map<Skill, Long> storedXp = new EnumMap<>(Skill.class);
+    /**
+     * The in-game XP of every skill the last time this plugin looked, so an XP
+     * drop can be measured as "new total minus this". It is session state on
+     * purpose: it is read from the client once each login has finished, so XP
+     * gained without the plugin running is never charged against the bank.
+     */
     private final Map<Skill, Integer> lastKnownXp = new EnumMap<>(Skill.class);
+    /**
+     * Game ticks still to wait before {@link #lastKnownXp} can be read after a
+     * login, world hop, or plugin start.
+     *
+     * <p>The client reports 0 XP for every skill until it has processed the
+     * login's stat sync, which lands <em>after</em> {@link GameState#LOGGED_IN}
+     * is announced. Reading the baseline at that moment on a freshly started
+     * client recorded 0 for every skill, and the sync's own {@link StatChanged}
+     * burst was then charged against the bank as if the player had just earned
+     * their whole XP total. RuneLite's XP tracker waits this many ticks for the
+     * same reason ("xp is not available until after login is finished").</p>
+     *
+     * <p>Only ever touched on the client thread, which is where every game
+     * event and both lifecycle hooks are delivered.</p>
+     */
+    private int loginSyncTicksRemaining;
+    /** How long the XP tracker waits after a login before trusting skill XP. */
+    private static final int LOGIN_SYNC_TICKS = 2;
     /** Skills already warned about crossing {@code lowXpThreshold}, so the chat line is sent once. */
     private final Set<Skill> warnedSkills = EnumSet.noneOf(Skill.class);
     /**
@@ -78,9 +102,6 @@ public class GokIrlBankedXpPlugin extends Plugin
 
     @Inject
     private Client client;
-
-    @Inject
-    private ClientThread clientThread;
 
     @Inject
     private GokIrlBankedXpConfig config;
@@ -151,10 +172,12 @@ public class GokIrlBankedXpPlugin extends Plugin
         SwingUtilities.invokeLater(panel::refreshActions);
         loadStoredXp();
         timerManager.startUp();
-        clientThread.invokeLater(() -> {
-            refreshLastKnownXp();
-            rebuildSnapshotAndNotify();
-        });
+        // The XP baseline is taken on a later game tick rather than here. If the
+        // plugin was just enabled mid-session the client already has real skill
+        // XP and the wait costs nothing; if it starts at the login screen, no
+        // tick fires until a login has happened and reset the wait anyway.
+        beginLoginSync();
+        rebuildSnapshotAndNotify();
     }
 
     @Override
@@ -178,6 +201,7 @@ public class GokIrlBankedXpPlugin extends Plugin
         // plugin relearns them from the first few drops rather than acting on
         // rates from whatever the user was training hours ago.
         depletionForecaster.clear();
+        loginSyncTicksRemaining = 0;
         synchronized (dataLock)
         {
             storedXp.clear();
@@ -206,6 +230,15 @@ public class GokIrlBankedXpPlugin extends Plugin
         // reading is available. Everything that banks XP runs on some other
         // thread and reads the level back from the tracker instead of the client.
         skillLevelTracker.recordExperience(skill, newXp);
+
+        if (loginSyncTicksRemaining > 0)
+        {
+            // This is the stat sync the server sends on login: the player's
+            // existing totals, not XP just earned. The baseline is read from the
+            // client once the sync has landed (see onGameTick), so nothing here
+            // may be measured against the bank.
+            return;
+        }
 
         boolean changed = false;
         String depletionWarning = null;
@@ -312,12 +345,63 @@ public class GokIrlBankedXpPlugin extends Plugin
     @Subscribe
     public void onGameStateChanged(GameStateChanged event)
     {
-        if (event.getGameState() == GameState.LOGGED_IN)
+        GameState state = event.getGameState();
+        // Both states precede a full stat sync from the server: a login sends
+        // every skill, and a world hop is a fresh login to another world. The
+        // LOGGED_IN state is deliberately not used — it fires before the sync
+        // has been processed (and again on every region change), so the skill
+        // XP the client reports at that moment is 0 on a fresh client.
+        if (state == GameState.LOGGING_IN || state == GameState.HOPPING)
         {
-            clientThread.invokeLater(() -> {
-                refreshLastKnownXp();
-                rebuildSnapshotAndNotify();
-            });
+            beginLoginSync();
+        }
+    }
+
+    /**
+     * Counts down the wait started by {@link #beginLoginSync()} and, when it
+     * ends, reads the XP baseline from the client. Game ticks only fire while
+     * logged in, so reaching zero here means a login has completed.
+     */
+    @Subscribe
+    public void onGameTick(GameTick event)
+    {
+        if (loginSyncTicksRemaining <= 0)
+        {
+            return;
+        }
+
+        loginSyncTicksRemaining--;
+        if (loginSyncTicksRemaining > 0)
+        {
+            return;
+        }
+
+        if (!refreshLastKnownXp())
+        {
+            // The sync has still not landed; try again next tick rather than
+            // record a baseline of zeros. Until it does, XP drops keep being
+            // ignored, which loses nothing: the baseline read later already
+            // includes them.
+            loginSyncTicksRemaining = 1;
+            return;
+        }
+
+        rebuildSnapshotAndNotify();
+    }
+
+    /**
+     * Forgets the XP baseline and starts the post-login wait.
+     *
+     * <p>Clearing the baseline is what makes the wait safe: with no previous
+     * reading on file, nothing can be measured until {@link #onGameTick} has
+     * read real figures from the client.</p>
+     */
+    private void beginLoginSync()
+    {
+        loginSyncTicksRemaining = LOGIN_SYNC_TICKS;
+        synchronized (dataLock)
+        {
+            lastKnownXp.clear();
         }
     }
 
@@ -531,11 +615,27 @@ public class GokIrlBankedXpPlugin extends Plugin
         }
     }
 
-    private void refreshLastKnownXp()
+    /**
+     * Reads every skill's XP from the client as the baseline later drops are
+     * measured against.
+     *
+     * @return false when the client does not yet hold real figures, in which
+     *         case nothing was recorded and the caller should try again later
+     */
+    private boolean refreshLastKnownXp()
     {
         if (client.getGameState() != GameState.LOGGED_IN)
         {
-            return;
+            return false;
+        }
+
+        // Every account has at least level 10 Hitpoints, so a reading of 0 XP
+        // there can only mean the login stat sync has not been processed yet.
+        // Taking the baseline now would record 0 for every skill and charge the
+        // player's entire XP total against the bank on the next update.
+        if (client.getSkillExperience(Skill.HITPOINTS) <= 0)
+        {
+            return false;
         }
 
         Map<Skill, Integer> observed = new EnumMap<>(Skill.class);
@@ -554,6 +654,7 @@ public class GokIrlBankedXpPlugin extends Plugin
         // bus. Keeping it out here means the plugin's own config listener never
         // runs while this method holds the data lock.
         observed.forEach(skillLevelTracker::recordExperience);
+        return true;
     }
 
     /**
