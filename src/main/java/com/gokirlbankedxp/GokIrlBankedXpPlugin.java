@@ -54,6 +54,12 @@ public class GokIrlBankedXpPlugin extends Plugin
     private static final BufferedImage NAV_ICON = buildIcon();
 
     private final Object dataLock = new Object();
+    /**
+     * The balance of every skill that has one. Positive is XP banked and waiting
+     * to be spent in-game; negative is XP owed, because in-game gains outran what
+     * was banked (see {@link #subtractXpLocked}). Zero is never stored — a skill
+     * with nothing banked and nothing owed simply has no entry.
+     */
     private final Map<Skill, Long> storedXp = new EnumMap<>(Skill.class);
     private final Map<Skill, Integer> lastKnownXp = new EnumMap<>(Skill.class);
     /** Skills already warned about crossing {@code lowXpThreshold}, so the chat line is sent once. */
@@ -265,8 +271,10 @@ public class GokIrlBankedXpPlugin extends Plugin
         long remaining = storedXp.getOrDefault(skill, 0L);
         if (remaining <= 0)
         {
-            // Already spent. There is nothing left to warn about, and re-arming
-            // here means the next top-up gets a fresh warning.
+            // Already spent, or in debt. There is nothing left to warn about, and
+            // re-arming here means the next top-up gets a fresh warning. The drop
+            // was still recorded above: the rate it teaches is just as valid for
+            // when the skill is topped up again.
             depletionWarnedSkills.remove(skill);
             return null;
         }
@@ -371,9 +379,16 @@ public class GokIrlBankedXpPlugin extends Plugin
      * the user is undoing an amount they can see in their balance, not re-earning
      * one.</p>
      *
+     * <p>A deposit into a skill that is in debt pays the debt off first. Owing
+     * 5,000 and banking 3,000 leaves the skill owing 2,000, and nothing shows as
+     * banked until the whole debt is cleared. That is the point of the debt: XP
+     * earned in-game ahead of the bank is still paid for with real-world effort,
+     * just after the fact.</p>
+     *
      * @param amount the base XP earned, before any multiplier
-     * @return how much was actually banked after the multiplier, which is 0 when
-     *     the skill's current tier multiplies by zero
+     * @return how much was actually credited after the multiplier, which is 0 when
+     *     the skill's current tier multiplies by zero. This is the figure that
+     *     moved the balance, whether it paid down a debt or added to the bank.
      */
     long addManualXp(Skill skill, long amount)
     {
@@ -392,9 +407,11 @@ public class GokIrlBankedXpPlugin extends Plugin
 
         synchronized (dataLock)
         {
-            // Saturating: banked totals clamp at the long ceiling rather than
-            // wrapping negative, which would read as "no XP banked".
-            storedXp.merge(skill, banked, LongMath::saturatedAdd);
+            // The deposit lands on whatever the balance is, debt included.
+            // Saturating: a huge total clamps at the long ceiling rather than
+            // wrapping negative, which would now read as an enormous debt.
+            long updated = LongMath.saturatedAdd(storedXp.getOrDefault(skill, 0L), banked);
+            storeBalanceLocked(skill, updated);
             warnedSkills.remove(skill);
             depletionWarnedSkills.remove(skill);
             persistStoredXpLocked();
@@ -409,10 +426,11 @@ public class GokIrlBankedXpPlugin extends Plugin
      *
      * <p>This is the undo for a mistyped or misdirected deposit, and it is
      * deliberately <em>not</em> the inverse of {@link #addManualXp}: it can only
-     * ever reduce a balance the user already has, never create a negative one.
-     * The caller asks for an amount and is told what was actually removed, so a
-     * request larger than the balance empties the skill instead of failing or
-     * going below zero.</p>
+     * ever reduce a balance the user already has, never create or deepen a
+     * negative one. A skill that is in debt has nothing to take back, so removal
+     * refuses it outright. The caller asks for an amount and is told what was
+     * actually removed, so a request larger than the balance empties the skill
+     * instead of failing or going below zero.</p>
      *
      * <p>A correction is not gameplay consumption, so it is kept out of the
      * warning machinery entirely: no low-XP chat line, no depletion flash, and no
@@ -438,15 +456,7 @@ public class GokIrlBankedXpPlugin extends Plugin
             }
 
             removed = Math.min(amount, current);
-            long updated = current - removed;
-            if (updated <= 0)
-            {
-                storedXp.remove(skill);
-            }
-            else
-            {
-                storedXp.put(skill, updated);
-            }
+            storeBalanceLocked(skill, current - removed);
 
             // Re-arm both warnings rather than firing them: the balance changed
             // because the user edited it, not because they trained.
@@ -459,7 +469,10 @@ public class GokIrlBankedXpPlugin extends Plugin
         return removed;
     }
 
-    /** The authoritative banked total for a skill, used to bound removals. */
+    /**
+     * The authoritative balance for a skill, used to bound removals. Negative
+     * while the skill is in debt, and 0 for a skill with no entry at all.
+     */
     long getBankedXp(Skill skill)
     {
         if (skill == null)
@@ -543,6 +556,25 @@ public class GokIrlBankedXpPlugin extends Plugin
         observed.forEach(skillLevelTracker::recordExperience);
     }
 
+    /**
+     * Applies an in-game XP drop to a skill's balance, one for one.
+     *
+     * <p>This is the only place a balance can go below zero. When the drop is
+     * bigger than what is banked — a quest reward, a lamp, or simply training a
+     * skill with nothing banked — the balance keeps falling into a debt rather
+     * than stopping at zero, and the next deposits pay that debt back before
+     * anything shows as banked again (see {@link #addManualXp}). Deposits and
+     * removals both refuse to create a debt, so one can only ever be earned in
+     * the game. That is what keeps the bank honest: every XP the character gains
+     * is eventually matched by real-world effort, whether banked before or
+     * after.</p>
+     *
+     * <p>Saturating at the long floor, for the same reason deposits saturate at
+     * the ceiling: a wrapped value would flip the sign and turn a debt into a
+     * fortune.</p>
+     *
+     * @return whether the balance moved, which every positive drop makes it do
+     */
     private boolean subtractXpLocked(Skill skill, long delta)
     {
         if (delta <= 0)
@@ -550,25 +582,30 @@ public class GokIrlBankedXpPlugin extends Plugin
             return false;
         }
 
-        Long current = storedXp.get(skill);
-        if (current == null || current <= 0)
-        {
-            return false;
-        }
+        long current = storedXp.getOrDefault(skill, 0L);
+        long updated = LongMath.saturatedSubtract(current, delta);
+        storeBalanceLocked(skill, updated);
 
-        long updated = Math.max(0, current - delta);
-        if (updated == 0)
+        handleThresholdLocked(skill, updated);
+        persistStoredXpLocked();
+        return updated != current;
+    }
+
+    /**
+     * Writes a balance into {@link #storedXp}, dropping the entry when it is
+     * exactly zero so "nothing banked, nothing owed" and "no entry" stay the same
+     * state everywhere the map is read. Called with {@link #dataLock} held.
+     */
+    private void storeBalanceLocked(Skill skill, long balance)
+    {
+        if (balance == 0)
         {
             storedXp.remove(skill);
         }
         else
         {
-            storedXp.put(skill, updated);
+            storedXp.put(skill, balance);
         }
-
-        handleThresholdLocked(skill, updated);
-        persistStoredXpLocked();
-        return updated != current;
     }
 
     private void handleThresholdLocked(Skill skill, long remaining)
@@ -582,6 +619,9 @@ public class GokIrlBankedXpPlugin extends Plugin
 
         if (remaining <= 0)
         {
+            // Spent, or in debt. The low warning is about a balance that is
+            // about to run out, not one that already has; the sidebar and
+            // overlay show the debt itself. Re-arm so the next top-up warns again.
             warnedSkills.remove(skill);
             return;
         }
@@ -625,19 +665,26 @@ public class GokIrlBankedXpPlugin extends Plugin
         for (Map.Entry<Skill, Long> entry : storedXp.entrySet())
         {
             long remaining = entry.getValue();
-            if (remaining <= 0)
+            if (remaining == 0)
             {
+                // Never stored (see storeBalanceLocked), but harmless to skip.
                 continue;
             }
 
             Skill skill = entry.getKey();
-            total += remaining;
+            // The total is the net position: debts count against banked XP, so a
+            // user with 10,000 banked in one skill and 4,000 owed in another sees
+            // 6,000, which is what their real-world effort has actually covered.
+            total = LongMath.saturatedAdd(total, remaining);
             skills.add(new BankedSkill(
                 skill,
                 skill.getName(),
                 remaining,
                 threshold,
-                remaining <= threshold
+                // LOW is a warning that a positive balance is nearly spent. A debt
+                // is its own state, flagged by BankedSkill.isInDebt(), not a
+                // very low balance.
+                remaining > 0 && remaining <= threshold
             ));
         }
 
@@ -646,6 +693,7 @@ public class GokIrlBankedXpPlugin extends Plugin
             return BankedXpSnapshot.empty();
         }
 
+        // Largest balance first, which puts every debt at the bottom of the list.
         skills.sort(Comparator.comparingLong(BankedSkill::getRemainingXp).reversed());
         return new BankedXpSnapshot(total, List.copyOf(skills));
     }
@@ -670,9 +718,14 @@ public class GokIrlBankedXpPlugin extends Plugin
         return image;
     }
 
+    /**
+     * An immutable read of every balance, published to the sidebar and overlay
+     * after each change so neither has to take {@link #dataLock}.
+     */
     @Value
     static class BankedXpSnapshot
     {
+        /** Net of every balance: banked XP minus XP owed. Can be zero or negative while any skill is in debt. */
         long totalXp;
         List<BankedSkill> skills;
 
@@ -681,9 +734,14 @@ public class GokIrlBankedXpPlugin extends Plugin
             return new BankedXpSnapshot(0L, Collections.emptyList());
         }
 
+        /**
+         * Whether there is anything to show. Judged on the skill list rather than
+         * the total, because a bank that is entirely debt nets to zero or less
+         * and is exactly the thing the user needs to see.
+         */
         boolean hasData()
         {
-            return totalXp > 0 && !skills.isEmpty();
+            return !skills.isEmpty();
         }
     }
 
@@ -692,8 +750,16 @@ public class GokIrlBankedXpPlugin extends Plugin
     {
         Skill skill;
         String displayName;
+        /** Positive: banked XP left to spend. Negative: XP owed after in-game gains outran the bank. */
         long remainingXp;
         int threshold;
+        /** Only ever true for a positive balance; a debt is reported by {@link #isInDebt()} instead. */
         boolean belowThreshold;
+
+        /** Whether in-game XP has outrun what was banked for this skill. */
+        boolean isInDebt()
+        {
+            return remainingXp < 0;
+        }
     }
 }

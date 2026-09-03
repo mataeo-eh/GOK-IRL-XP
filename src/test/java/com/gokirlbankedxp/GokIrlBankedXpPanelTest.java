@@ -93,6 +93,35 @@ class GokIrlBankedXpPanelTest
         assertTrue(removeSelector.isEnabled());
     }
 
+    /** A skill in debt has nothing to take back, so the removal form must not offer it. */
+    @Test
+    void removalDoesNotOfferASkillThatIsInDebt() throws Exception
+    {
+        GokIrlBankedXpPlugin plugin = mock(GokIrlBankedXpPlugin.class);
+        when(plugin.getTrackableSkills()).thenReturn(new Skill[]{Skill.COOKING, Skill.WOODCUTTING});
+        when(plugin.getBankedXp(Skill.COOKING)).thenReturn(500L);
+        when(plugin.getBankedXp(Skill.WOODCUTTING)).thenReturn(-5_000L);
+
+        AtomicReference<GokIrlBankedXpPanel> panelReference = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> panelReference.set(new GokIrlBankedXpPanel(plugin, new TestMultipliers().multiplierManager)));
+
+        // Cooking is banked; Woodcutting is owed after a quest reward.
+        panelReference.get().updateSnapshot(new GokIrlBankedXpPlugin.BankedXpSnapshot(
+            -4_500L,
+            List.of(
+                new GokIrlBankedXpPlugin.BankedSkill(Skill.COOKING, "Cooking", 500L, 0, false),
+                new GokIrlBankedXpPlugin.BankedSkill(Skill.WOODCUTTING, "Woodcutting", -5_000L, 0, false))));
+        SwingUtilities.invokeAndWait(() -> { });
+
+        AtomicReference<List<JComboBox<?>>> combos = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> combos.set(findComboBoxes(panelReference.get())));
+
+        JComboBox<?> removeSelector = combos.get().get(1);
+        assertEquals(1, removeSelector.getItemCount());
+        assertEquals(Skill.COOKING, removeSelector.getItemAt(0));
+        assertTrue(removeSelector.isEnabled());
+    }
+
     @Test
     void removalIsInertWhenNothingIsBanked() throws Exception
     {

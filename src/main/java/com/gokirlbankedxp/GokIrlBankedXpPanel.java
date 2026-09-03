@@ -421,12 +421,23 @@ class GokIrlBankedXpPanel extends JPanel
 
             for (GokIrlBankedXpPlugin.BankedSkill entry : snapshot.getSkills())
             {
+                // A debt prints with its minus sign (e.g. "-5,000 XP") and is
+                // marked OWED; LOW is reserved for a positive balance nearly spent.
+                String marker = "";
+                if (entry.isInDebt())
+                {
+                    marker = "   OWED";
+                }
+                else if (entry.isBelowThreshold())
+                {
+                    marker = "   LOW";
+                }
                 String line = String.format(
                     Locale.US,
                     "%s   •   %s XP%s",
                     entry.getDisplayName(),
                     QuantityFormatter.formatNumber(entry.getRemainingXp()),
-                    entry.isBelowThreshold() ? "   LOW" : ""
+                    marker
                 );
                 skillListModel.addElement(line);
             }
@@ -434,7 +445,9 @@ class GokIrlBankedXpPanel extends JPanel
     }
 
     /**
-     * Rebuilds the removal drop-down to hold exactly the skills with a balance.
+     * Rebuilds the removal drop-down to hold exactly the skills with a positive
+     * balance. A skill in debt is left out: there is nothing banked to take back,
+     * and removal must never deepen a debt.
      *
      * <p>Already on the EDT — the only caller is inside {@link #updateSnapshot}'s
      * {@code invokeLater} — so it must not queue another round trip, or the

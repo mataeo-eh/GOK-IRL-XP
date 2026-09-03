@@ -1,6 +1,7 @@
 package com.gokirlbankedxp;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -29,8 +30,9 @@ import net.runelite.client.config.Notification;
 import org.junit.jupiter.api.Test;
 
 /**
- * Covers the two ways banked XP moves other than a plain deposit: the user
- * correcting a mistake, and the plugin warning that a skill is about to run dry.
+ * Covers the ways banked XP moves other than a plain deposit: the user
+ * correcting a mistake, the plugin warning that a skill is about to run dry, and
+ * in-game XP outrunning the bank, which leaves the skill in debt.
  *
  * <p>RuneLite builds the plugin through its own child injector, which a unit test
  * cannot start, so the {@code @Inject} fields are set reflectively here. That is
@@ -192,12 +194,118 @@ class BankedXpAdjustmentTest
         assertEquals(0, fixture.forecaster.sampleCount(Skill.WOODCUTTING));
     }
 
+    // ---- debt: in-game XP outrunning the bank ------------------------------
+
+    @Test
+    void gainingXpWithNothingBankedPutsTheSkillInDebt()
+    {
+        Fixture fixture = new Fixture();
+
+        // A quest reward of 5,000 Woodcutting XP with nothing banked for it.
+        fixture.gainXp(Skill.WOODCUTTING, 5_000, 1);
+
+        assertEquals(-5_000L, fixture.plugin.getBankedXp(Skill.WOODCUTTING));
+        assertEquals("WOODCUTTING:-5000", fixture.storedXp());
+    }
+
+    @Test
+    void trainingPastTheBalanceCarriesTheOverflowIntoDebt()
+    {
+        Fixture fixture = new Fixture();
+        fixture.plugin.addManualXp(Skill.WOODCUTTING, 300L);
+
+        fixture.gainXp(Skill.WOODCUTTING, 500, 1);
+
+        assertEquals(-200L, fixture.plugin.getBankedXp(Skill.WOODCUTTING));
+    }
+
+    @Test
+    void depositsPayOffTheDebtBeforeAnythingShowsAsBanked()
+    {
+        Fixture fixture = new Fixture();
+        fixture.gainXp(Skill.WOODCUTTING, 5_000, 1);
+
+        fixture.plugin.addManualXp(Skill.WOODCUTTING, 3_000L);
+        assertEquals(-2_000L, fixture.plugin.getBankedXp(Skill.WOODCUTTING));
+
+        // Exactly clearing the debt leaves no entry at all, the same as never
+        // having banked or owed anything.
+        fixture.plugin.addManualXp(Skill.WOODCUTTING, 2_000L);
+        assertEquals(0L, fixture.plugin.getBankedXp(Skill.WOODCUTTING));
+        assertEquals("", fixture.storedXp());
+
+        // Only now does the balance start counting as banked again.
+        fixture.plugin.addManualXp(Skill.WOODCUTTING, 100L);
+        assertEquals(100L, fixture.plugin.getBankedXp(Skill.WOODCUTTING));
+    }
+
+    @Test
+    void removalCannotDeepenADebt()
+    {
+        Fixture fixture = new Fixture();
+        fixture.gainXp(Skill.WOODCUTTING, 5_000, 1);
+
+        // Debt is only ever earned in the game; the sidebar cannot add to it.
+        assertEquals(0L, fixture.plugin.removeManualXp(Skill.WOODCUTTING, 100L));
+        assertEquals(-5_000L, fixture.plugin.getBankedXp(Skill.WOODCUTTING));
+    }
+
+    @Test
+    void aDebtIsShownInTheSnapshotAndNettedIntoTheTotal()
+    {
+        Fixture fixture = new Fixture();
+        fixture.plugin.addManualXp(Skill.COOKING, 10_000L);
+        fixture.gainXp(Skill.WOODCUTTING, 4_000, 1);
+
+        GokIrlBankedXpPlugin.BankedXpSnapshot snapshot = fixture.plugin.getCurrentSnapshot();
+
+        assertTrue(snapshot.hasData());
+        assertEquals(6_000L, snapshot.getTotalXp());
+        assertEquals(2, snapshot.getSkills().size());
+        // Largest balance first, so the debt sits at the bottom of the list.
+        GokIrlBankedXpPlugin.BankedSkill debt = snapshot.getSkills().get(1);
+        assertEquals(Skill.WOODCUTTING, debt.getSkill());
+        assertEquals(-4_000L, debt.getRemainingXp());
+        assertTrue(debt.isInDebt());
+        assertFalse(debt.isBelowThreshold(), "a debt is its own state, not a low balance");
+    }
+
+    @Test
+    void aBankThatIsEntirelyDebtStillHasSomethingToShow()
+    {
+        Fixture fixture = new Fixture();
+        fixture.gainXp(Skill.WOODCUTTING, 4_000, 1);
+
+        GokIrlBankedXpPlugin.BankedXpSnapshot snapshot = fixture.plugin.getCurrentSnapshot();
+
+        // The total is below zero, but the overlay and sidebar must not go
+        // blank: the debt is exactly what the user needs to see.
+        assertTrue(snapshot.hasData());
+        assertEquals(-4_000L, snapshot.getTotalXp());
+    }
+
+    @Test
+    void goingIntoDebtFiresNoWarnings()
+    {
+        Fixture fixture = new Fixture();
+        when(fixture.config.chatWarningEnabled()).thenReturn(true);
+        when(fixture.config.lowXpThreshold()).thenReturn(500);
+
+        fixture.gainXp(Skill.WOODCUTTING, 1_000, 5);
+
+        // Both warnings are about a balance that is about to run out; a skill
+        // with nothing banked has nothing to run out of.
+        verify(fixture.notifier, never()).notify(any(Notification.class), anyString());
+        verify(fixture.client, never()).addChatMessage(any(), anyString(), anyString(), any());
+    }
+
     /** A plugin wired to mocks, with banked XP kept in an in-memory config map. */
     private static final class Fixture
     {
         private final GokIrlBankedXpPlugin plugin = new GokIrlBankedXpPlugin();
         private final GokIrlBankedXpConfig config = mock(GokIrlBankedXpConfig.class);
         private final Notifier notifier = mock(Notifier.class);
+        private final Client client = mock(Client.class);
         private final DepletionForecaster forecaster = new DepletionForecaster();
         private final Map<String, String> stored = new HashMap<>();
 
@@ -219,7 +327,7 @@ class BankedXpAdjustmentTest
             // The real store, pointed at a throwaway directory, so these cases run
             // the genuine save path without touching the developer's ~/.runelite.
             set("bankedXpStore", new BankedXpStore(inMemoryConfigManager(stored), new Gson(), TestDataDir.create()));
-            set("client", mock(Client.class));
+            set("client", client);
             set("panel", mock(GokIrlXpPanel.class));
 
             // Real services rather than mocks: with no tiers configured they

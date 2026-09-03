@@ -81,7 +81,14 @@ class GokIrlBankedXpOverlay extends OverlayPanel
                     .left(entry.getDisplayName())
                     .right(QuantityFormatter.formatNumber(entry.getRemainingXp()));
 
-                if (entry.isBelowThreshold())
+                // Red for a debt (the figure already carries its minus sign),
+                // orange for a positive balance that is nearly spent.
+                if (entry.isInDebt())
+                {
+                    builder.leftColor(Color.RED);
+                    builder.rightColor(Color.RED);
+                }
+                else if (entry.isBelowThreshold())
                 {
                     builder.leftColor(Color.ORANGE);
                     builder.rightColor(Color.ORANGE);

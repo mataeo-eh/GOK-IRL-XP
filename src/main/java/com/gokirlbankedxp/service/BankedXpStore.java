@@ -126,7 +126,9 @@ public class BankedXpStore
     /**
      * Reads both copies, keeps the newest, and brings the other up to date.
      *
-     * @return the balances to use, only ever holding skills with a positive amount
+     * @return the balances to use, only ever holding skills with a non-zero
+     *     amount. A negative amount is XP the skill owes after in-game gains
+     *     outran the bank; the plugin nets later deposits against it.
      */
     public synchronized Map<Skill, Long> load()
     {
@@ -157,7 +159,8 @@ public class BankedXpStore
     /**
      * Writes the balances to both copies with a fresh save time.
      *
-     * @param balances skills with their banked XP; entries at or below zero are dropped
+     * @param balances skills with their balance, positive for banked XP and
+     *     negative for XP owed; entries at exactly zero are dropped
      */
     public synchronized void save(Map<Skill, Long> balances)
     {
@@ -210,7 +213,8 @@ public class BankedXpStore
 
     /**
      * {@code SKILL:xp} entries in {@link Skill} declaration order (the order the
-     * previous format used too), or the empty string when nothing is banked.
+     * previous format used too), or the empty string when nothing is banked or
+     * owed. A debt is written with its sign, e.g. {@code WOODCUTTING:-5000}.
      */
     private static String serializeBalances(Map<Skill, Long> balances)
     {
@@ -218,7 +222,7 @@ public class BankedXpStore
         // TreeMap so the order is stable regardless of the input map type.
         for (Map.Entry<Skill, Long> entry : new TreeMap<>(balances).entrySet())
         {
-            if (entry.getValue() == null || entry.getValue() <= 0)
+            if (entry.getValue() == null || entry.getValue() == 0)
             {
                 continue;
             }
@@ -238,7 +242,7 @@ public class BankedXpStore
         contents.skills = new LinkedHashMap<>();
         for (Map.Entry<Skill, Long> entry : new TreeMap<>(copy.balances).entrySet())
         {
-            if (entry.getValue() != null && entry.getValue() > 0)
+            if (entry.getValue() != null && entry.getValue() != 0)
             {
                 contents.skills.put(entry.getKey().name(), entry.getValue());
             }
@@ -357,7 +361,11 @@ public class BankedXpStore
         return new Copy(contents.savedAt, balances);
     }
 
-    /** Adds one entry when the skill name is known and the amount is a positive number. */
+    /**
+     * Adds one entry when the skill name is known and the amount is a non-zero
+     * number. Negative amounts are debts and are kept; only an explicit zero is
+     * dropped, because it carries the same meaning as no entry.
+     */
     private static void putIfValid(Map<Skill, Long> into, String skillName, String amountRaw)
     {
         Skill skill = parseSkill(skillName);
@@ -368,7 +376,7 @@ public class BankedXpStore
         try
         {
             long amount = Long.parseLong(amountRaw.trim());
-            if (amount > 0)
+            if (amount != 0)
             {
                 into.put(skill, amount);
             }

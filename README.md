@@ -11,7 +11,8 @@ Turn your real-life effort into RuneScape progress. Bank XP for any skill by log
 
 ## Features
 - **Manual XP banking:** Add XP chunks to any skill from the “Banked XP” tab.
-- **Fix mistakes:** Remove banked XP you added to the wrong skill, or too much of. A balance can never go negative.
+- **Fix mistakes:** Remove banked XP you added to the wrong skill, or too much of. Removing can never push a balance below zero.
+- **XP debt:** Gain more XP in-game than you have banked for that skill — a quest reward, a lamp, training with nothing banked — and the balance goes negative. The next XP you bank for it pays the debt off before anything counts as banked again.
 - **Custom actions:** Define IRL activities with default XP rates and per-skill overrides.
 - **Timed or untimed:** Run an action on a clock, or make it a benchmark (XP per pound lifted, per km run) that you log after the fact.
 - **Log completed work:** Enter how much you did in one go and how many times you repeated it; the plugin does the arithmetic and banks the XP.
@@ -119,7 +120,7 @@ For example, with “Running” at 250 XP/km: `12` km in one go, repeated `9` ti
 
 ### Manual XP Banking
 - Open the **BANKED XP** tab, leave the switch on **Add XP**, choose a skill, enter an XP chunk, and click **Bank XP**.
-- The overlay and panel will show the updated totals. XP is consumed automatically as you gain it in-game for that skill.
+- The overlay and panel will show the updated totals. XP is consumed automatically as you gain it in-game for that skill. If the skill is in debt (see **XP Debt** below), the deposit pays the debt down first.
 - Only positive whole numbers are accepted. Typing a negative amount here will not reduce a balance — use **Remove XP** for that.
 
 ### Removing Banked XP
@@ -127,8 +128,19 @@ Banked to the wrong skill, or fat-fingered an extra zero? Switch the **BANKED XP
 
 - The skill drop-down lists only skills that currently hold banked XP, so there is nothing to pick for a skill sitting at zero.
 - The line under it shows exactly how much that skill has banked; that amount is the most you can remove.
-- Enter the amount and click **Remove XP**. Entering more than is banked is rejected rather than silently clamped, and a balance can never end up negative.
+- Enter the amount and click **Remove XP**. Entering more than is banked is rejected rather than silently clamped, and removing can never push a balance below zero. A skill that is in debt is not offered at all, because there is nothing banked to take back.
 - Removing XP is treated as a correction, not as training: it will not trigger the low-XP chat warning or the depletion flash.
+
+### XP Debt
+Banked XP drains one for one as you gain XP in-game — and the game does not stop at zero, so neither does the plugin. When you gain more XP in a skill than you have banked for it, the balance keeps going down into a **debt**.
+
+- With no Woodcutting XP banked, a quest that rewards 5,000 Woodcutting XP leaves the skill at **-5,000 XP**. Training 500 XP past a 300 XP balance leaves it at -200.
+- The next XP you bank for that skill pays the debt off first. Banking 3,000 against a 5,000 debt leaves 2,000 owed; only once the debt is cleared does the balance climb back above zero and start counting as banked again.
+- A debt can only come from in-game XP. **Bank XP** never creates one and **Remove XP** never deepens one — a skill in debt does not even appear in the removal drop-down.
+- The sidebar marks a skill in debt **OWED** and the overlay shows it in red. The total at the top is the net figure: banked XP minus everything owed.
+- Neither warning fires for a debt. The low-XP chat line and the red flash are about a balance that is about to run out, not one that already has.
+
+This is what keeps the bank honest: every XP your character gains is matched by real-world effort sooner or later, whether you banked it beforehand or owe it afterwards.
 
 ### Level Multipliers
 Bank more — or less — XP as your in-game levels climb. Each skill has its own ladder of thresholds, set on the **LEVEL MULTIPLIERS** tab, and skills you never touch are unaffected.
@@ -151,7 +163,7 @@ It applies to every deposit: timers, logged completed work, and the manual **Ban
 - To switch the whole feature off without losing your thresholds, untick **Use level multipliers** in RuneLite's settings. The tab says so in red while it is off.
 
 ### Overlay
-- Shows total banked XP plus per-skill amounts (highlighted when under your low threshold).
+- Shows total banked XP plus per-skill amounts (orange when under your low threshold, red when the skill is in debt). The total is the net figure: banked XP minus anything owed.
 - Lists active timers with elapsed time and XP rates so you can see what’s running without opening the sidebar.
 - **Resizing:** hold RuneLite’s overlay drag key — **ALT** by default — and drag any edge or corner of the overlay to the size you want. The font scales with it, so it stays readable when small and does not look sparse when large.
   - To change that key, open RuneLite’s settings (the wrench icon), open the **RuneLite** configuration, and rebind **Drag hotkey**. It applies to every overlay, so it is set once for the whole client rather than per plugin.
@@ -199,7 +211,8 @@ Overlay size and position are not config items — resize the overlay in place w
 - **My banked XP disappeared after restarting RuneLite.** Versions before this one kept banked XP only in RuneLite’s config, which RuneLite’s profile sync can roll back to an older copy. The plugin now also keeps its own file and restores from it. Balances lost before this version cannot be recovered; re-bank them, and they will stay.
 - **Where do I see totals?** The overlay shows totals and active timers; the BANKED XP tab lists banked XP by skill.
 - **I banked XP to the wrong skill. Can I undo it?** Yes — the **Remove XP** switch on the BANKED XP tab takes it back out. Adding a negative amount is still refused; removal is the only way a balance goes down by hand.
-- **Can banked XP go negative?** No. Training in-game stops subtracting at zero, and removal is capped at what the skill actually holds.
+- **Can banked XP go negative?** Only by gaining XP in-game. If you earn more in a skill than you have banked for it, the balance goes into debt and the next XP you bank pays that debt off first. See **XP Debt** above. **Bank XP** never creates a debt and **Remove XP** is capped at what the skill actually holds.
+- **My skill shows a negative number / OWED. What happened?** You gained more XP in that skill than you had banked — often a quest reward or a lamp. Bank XP for that skill and the debt shrinks; once it reaches zero the balance starts building up again.
 - **Do I need to re-create actions each time?** No, actions persist. You can also edit or delete them later.
 - **Do level multipliers stack?** No. Only the highest threshold you have reached applies, and it replaces the lower ones entirely rather than compounding with them.
 - **Does a multiplier change how fast my banked XP drains?** No. In-game XP always consumes your balance one for one. Multipliers only affect what goes in.
@@ -209,7 +222,7 @@ Overlay size and position are not config items — resize the overlay in place w
 ## Troubleshooting
 - **Plugin doesn’t appear:** Confirm `~/.runelite/credentials.properties` exists, close the official client, and start the development client with `./gradlew run`.
 - **Timers not moving:** Verify you selected an action and clicked Start. Timers only tick while RuneLite stays open.
-- **Overlay missing:** It hides when there is no banked XP and no active timers. Add XP or start a timer to show it.
+- **Overlay missing:** It hides when there is no banked XP, no XP owed, and no active timers. Add XP or start a timer to show it.
 - **Overlay is the wrong size after changing screen mode:** Hold ALT (RuneLite's overlay drag key) and drag its edge to resize, or ALT + right-click it to reset to the default.
 - **Depletion warning never fires:** It needs a few XP drops in that skill first to learn what one action costs, and it only fires for skills that have banked XP. Check that **Warn N actions early** is not `0`, and that **Depletion warning** is enabled.
 - **Build issues:** Run `./gradlew --version` and confirm Gradle sees JDK 11 or newer. Plugin source is compiled for Java 11 to match Plugin Hub requirements.
@@ -219,7 +232,7 @@ Overlay size and position are not config items — resize the overlay in place w
 - Community help is also available in the RuneLite Discord (#plugin-support) for external plugins.
 
 ## Changelog (high level)
-- **Unreleased:** Banked XP is now also saved to a plugin-owned file and restored from it when RuneLite’s config copy is older or missing, fixing balances vanishing after a restart; the low-XP and almost-out warnings genuinely fire once instead of re-arming on every XP drop. Per-skill level multipliers with as many thresholds as you want; settings panel regrouped into named, self-describing sections and the sidebar now signposts where every option lives; remove banked XP to fix mistakes; overlay honours drag-resizing and scales its font; clearer labels and preview in “Log completed work”; screen flashes red when a skill is a few actions from empty.
+- **Unreleased:** Banked XP can now go into debt: gaining more XP in-game than a skill has banked takes the balance negative, and the next XP banked for that skill pays the debt off before counting as banked. Banked XP is now also saved to a plugin-owned file and restored from it when RuneLite’s config copy is older or missing, fixing balances vanishing after a restart; the low-XP and almost-out warnings genuinely fire once instead of re-arming on every XP drop. Per-skill level multipliers with as many thresholds as you want; settings panel regrouped into named, self-describing sections and the sidebar now signposts where every option lives; remove banked XP to fix mistakes; overlay honours drag-resizing and scales its font; clearer labels and preview in “Log completed work”; screen flashes red when a skill is a few actions from empty.
 - **0.0.1:** Initial release with manual XP banking, custom actions, timers, overlay updates, and persistence.
 
 ## Extras

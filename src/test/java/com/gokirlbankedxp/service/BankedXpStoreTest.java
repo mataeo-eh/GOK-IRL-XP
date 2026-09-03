@@ -58,6 +58,29 @@ class BankedXpStoreTest
         assertEquals(1_200L, loaded.get(Skill.COOKING));
     }
 
+    /** A debt is a balance like any other: it must make the round trip with its sign intact. */
+    @Test
+    void aDebtIsSavedWithItsSignAndLoadsBack()
+    {
+        Map<String, String> config = new HashMap<>();
+        BankedXpStore store = new BankedXpStore(inMemoryConfigManager(config), new Gson(), dataDir);
+
+        store.save(balances(Skill.AGILITY, 5_850L, Skill.WOODCUTTING, -5_000L, Skill.COOKING, 0L));
+
+        // Zero means "no entry" and is dropped; the debt is kept, sign and all.
+        assertEquals("WOODCUTTING:-5000,AGILITY:5850", config.get(XP));
+
+        Map<Skill, Long> loaded = store.load();
+        assertEquals(-5_000L, loaded.get(Skill.WOODCUTTING));
+        assertEquals(5_850L, loaded.get(Skill.AGILITY));
+        assertFalse(loaded.containsKey(Skill.COOKING));
+
+        // The plugin-owned file restores the same debt on its own.
+        config.clear();
+        Map<Skill, Long> fromFile = new BankedXpStore(inMemoryConfigManager(config), new Gson(), dataDir).load();
+        assertEquals(-5_000L, fromFile.get(Skill.WOODCUTTING));
+    }
+
     /** The reported bug, reproduced: config rolled back to an old copy, the file has the session. */
     @Test
     void aConfigCopyOlderThanTheFileIsRestoredFromTheFile()
