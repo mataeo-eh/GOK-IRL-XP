@@ -115,7 +115,9 @@ For example, with “Running” at 250 XP/km: `12` km in one go, repeated `9` ti
 - Only actions marked as timed appear in the Timers drop-down; an untimed action has no duration to count against.
 - Select an action by name in the Timers section and click **Start Selected Action**.
 - Use **Pause**, **Resume**, or **Stop** on the selected timer.
+- Pause and Stop bank any completed units since the last timer update; unfinished units are not rounded up.
 - Multiple timers can run at once; each action keeps its own XP rates and elapsed time.
+- Existing timers keep the duration and XP rates they started with, including after restarting RuneLite. Editing an action changes new timers; stop and restart a timer to use the edited rates. Deleting an action or making it untimed still removes its timers.
 - Timers only run while RuneLite is open. They pause on shutdown and continue when you reopen the client.
 
 ### Manual XP Banking
@@ -181,6 +183,7 @@ The plugin can flash the screen red just before a skill’s banked XP runs out, 
 
 ### Data Persistence
 - Actions, custom units, timers, and banked XP save automatically. No export is required to keep your progress.
+- Switching RuneLite configuration profiles reloads that profile's actions, units, timers, observed levels, multipliers, and balances. Timers from the previous profile do not carry into the new one.
 - Banked XP is saved in two places every time it changes: RuneLite’s config for the active profile, and a file of the plugin’s own at `~/.runelite/gok-irl-xp/banked-xp-<profile id>.json`. On start-up the plugin keeps whichever copy is newer and brings the other up to date.
 - The file exists because RuneLite’s config alone is not safe for this kind of data. When a profile is synced to a RuneLite account and one upload fails, RuneLite replaces the local config with the server’s copy on the next launch, and everything banked since the last successful upload is rolled back. The plugin’s own file is never touched by that sync, so your balances survive it.
 - Actions, units, timers and level multipliers still live only in RuneLite’s config.

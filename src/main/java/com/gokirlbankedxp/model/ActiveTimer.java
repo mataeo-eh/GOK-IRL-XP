@@ -13,6 +13,22 @@ public class ActiveTimer
     private boolean paused;
     private long lastTickMillis;
     private long awardedUnits;
+    /** Frozen earning terms: editing an action must not reinterpret time already paid. */
+    private IrlAction actionSnapshot;
+
+    public IrlAction getActionSnapshot()
+    {
+        return actionSnapshot;
+    }
+
+    /** Bind once; also used to migrate timers saved before snapshots existed. */
+    public void bindAction(IrlAction action)
+    {
+        if (actionSnapshot == null)
+        {
+            actionSnapshot = action;
+        }
+    }
 
     public ActiveTimer(UUID id, UUID actionId, long elapsedSeconds, boolean paused, long lastTickMillis, long awardedUnits)
     {
@@ -94,6 +110,8 @@ public class ActiveTimer
 
     public Map<Skill, Long> applyTick(long nowMillis, IrlAction action)
     {
+        bindAction(action);
+        action = actionSnapshot;
         if (action == null || paused)
         {
             lastTickMillis = nowMillis;
@@ -150,6 +168,8 @@ public class ActiveTimer
 
     public ActiveTimer copy()
     {
-        return new ActiveTimer(id, actionId, elapsedSeconds, paused, lastTickMillis, awardedUnits);
+        ActiveTimer copy = new ActiveTimer(id, actionId, elapsedSeconds, paused, lastTickMillis, awardedUnits);
+        copy.bindAction(actionSnapshot);
+        return copy;
     }
 }

@@ -19,6 +19,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import javax.inject.Inject;
 import javax.swing.SwingUtilities;
@@ -32,8 +33,10 @@ import net.runelite.api.events.GameTick;
 import net.runelite.api.events.StatChanged;
 import net.runelite.client.Notifier;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.config.ConfigProfile;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
+import net.runelite.client.events.ProfileChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.ClientToolbar;
@@ -99,6 +102,23 @@ public class GokIrlBankedXpPlugin extends Plugin
 
     private volatile BankedXpSnapshot currentSnapshot = BankedXpSnapshot.empty();
     private NavigationButton navigationButton;
+    private volatile Long loadedProfileId;
+    private volatile boolean profileLoaded;
+
+    @Inject
+    private ConfigManager configManager;
+
+    private Long currentProfileId()
+    {
+        ConfigProfile profile = configManager.getProfile();
+        return profile == null ? null : profile.getId();
+    }
+
+    /** Reject work from the previous profile during ConfigManager's event-delivery gap. */
+    private boolean isProfileCurrent()
+    {
+        return !profileLoaded || Objects.equals(loadedProfileId, currentProfileId());
+    }
 
     @Inject
     private Client client;
@@ -152,6 +172,8 @@ public class GokIrlBankedXpPlugin extends Plugin
     @Override
     protected void startUp()
     {
+        loadedProfileId = currentProfileId();
+        profileLoaded = true;
         overlayManager.add(overlay);
         navigationButton = NavigationButton.builder()
             .tooltip("IRL XP")
@@ -217,6 +239,10 @@ public class GokIrlBankedXpPlugin extends Plugin
     @Subscribe
     public void onStatChanged(StatChanged event)
     {
+        if (!isProfileCurrent())
+        {
+            return;
+        }
         Skill skill = event.getSkill();
         if (skill == null)
         {
@@ -413,6 +439,13 @@ public class GokIrlBankedXpPlugin extends Plugin
             return;
         }
 
+        // A profile switch emits per-key events before ProfileChanged. Wait for
+        // the complete transition rather than mixing new balances with old timers.
+        if (!isProfileCurrent())
+        {
+            return;
+        }
+
         boolean needsRefresh = false;
         if ("lowXpThreshold".equals(event.getKey()))
         {
@@ -448,6 +481,24 @@ public class GokIrlBankedXpPlugin extends Plugin
         }
     }
 
+    /** RuneLite leaves enabled plugins running when configuration profiles change. */
+    @Subscribe
+    public void onProfileChanged(ProfileChanged event)
+    {
+        timerManager.reloadProfile(() -> {
+            loadedProfileId = currentProfileId();
+            profileLoaded = true;
+            irlActionManager.loadActions();
+            skillLevelTracker.load();
+            xpMultiplierManager.load();
+            loadStoredXp();
+            depletionForecaster.clear();
+        });
+        // Refresh every visible library, including an already-open multipliers tab.
+        SwingUtilities.invokeLater(panel::refreshActions);
+        rebuildSnapshotAndNotify();
+    }
+
     /**
      * The one door XP comes in through, and therefore the one place the level
      * multiplier is applied.
@@ -476,7 +527,7 @@ public class GokIrlBankedXpPlugin extends Plugin
      */
     long addManualXp(Skill skill, long amount)
     {
-        if (skill == null || amount <= 0)
+        if (!isProfileCurrent() || skill == null || amount <= 0)
         {
             return 0L;
         }
@@ -802,7 +853,12 @@ public class GokIrlBankedXpPlugin extends Plugin
     /** Saves the current balances; called with {@link #dataLock} held after every change. */
     private void persistStoredXpLocked()
     {
-        bankedXpStore.save(storedXp);
+        // A profile may change after work began on the scheduler or client thread.
+        // The forthcoming ProfileChanged reload replaces that obsolete in-memory state.
+        if (isProfileCurrent())
+        {
+            bankedXpStore.save(storedXp);
+        }
     }
 
     private static BufferedImage buildIcon()

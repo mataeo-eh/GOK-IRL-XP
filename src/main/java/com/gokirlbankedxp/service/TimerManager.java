@@ -4,6 +4,7 @@ import com.gokirlbankedxp.GokIrlBankedXpConfig;
 import com.gokirlbankedxp.GokIrlBankedXpPlugin;
 import com.gokirlbankedxp.model.ActiveTimer;
 import com.gokirlbankedxp.model.IrlAction;
+import com.google.common.math.LongMath;
 import com.google.gson.Gson;
 import com.google.gson.JsonParseException;
 import com.google.gson.reflect.TypeToken;
@@ -26,6 +27,7 @@ import javax.inject.Inject;
 import javax.inject.Singleton;
 import net.runelite.api.Skill;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.config.ConfigProfile;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -64,6 +66,25 @@ public class TimerManager
     private final Object lock = new Object();
     private final Map<UUID, ActiveTimer> activeTimers = new LinkedHashMap<>();
     private int ticksSinceSave = 0;
+    /** Identity of the config profile which owns the in-memory timers. */
+    private Long loadedProfileId;
+
+    private Long currentProfileId()
+    {
+        ConfigProfile profile = configManager.getProfile();
+        return profile == null ? null : profile.getId();
+    }
+
+    /** Reload all dependent state while timer ticks are excluded. Never save old timers into the new profile. */
+    public void reloadProfile(Runnable reloadDependencies)
+    {
+        synchronized (lock)
+        {
+            activeTimers.clear();
+            reloadDependencies.run();
+            loadTimersLocked();
+        }
+    }
 
     @Inject
     public TimerManager(ConfigManager configManager, IrlActionManager actionManager, GokIrlBankedXpPlugin plugin,
@@ -122,22 +143,26 @@ public class TimerManager
      */
     public Optional<UUID> startTimer(UUID actionId)
     {
-        Optional<IrlAction> action = actionManager.getAction(actionId);
-        if (action.isEmpty() || !action.get().isTimed())
-        {
-            return Optional.empty();
-        }
-
-        ActiveTimer timer = ActiveTimer.start(actionId, timeSupplier.get());
-        timer.alignAwardedUnits(action.get().getSecondsPerUnit());
-
         synchronized (lock)
         {
+            if (!Objects.equals(loadedProfileId, currentProfileId()))
+            {
+                return Optional.empty();
+            }
+            // Resolve inside the reload boundary so a captured action cannot
+            // outlive its profile and seed a timer in the next one.
+            Optional<IrlAction> action = actionManager.getAction(actionId);
+            if (action.isEmpty() || !action.get().isTimed())
+            {
+                return Optional.empty();
+            }
+            ActiveTimer timer = ActiveTimer.start(actionId, timeSupplier.get());
+            timer.bindAction(action.get());
+            timer.alignAwardedUnits(action.get().getSecondsPerUnit());
             activeTimers.put(timer.getId(), timer);
             saveTimersLocked();
+            return Optional.of(timer.getId());
         }
-
-        return Optional.of(timer.getId());
     }
 
     public boolean stopTimer(UUID timerId)
@@ -149,12 +174,21 @@ public class TimerManager
 
         synchronized (lock)
         {
-            boolean removed = activeTimers.remove(timerId) != null;
-            if (removed)
+            if (!Objects.equals(loadedProfileId, currentProfileId()))
             {
-                saveTimersLocked();
+                return false;
             }
-            return removed;
+            ActiveTimer timer = activeTimers.get(timerId);
+            if (timer == null)
+            {
+                return false;
+            }
+            // Match Pause: settle completed units, but do not round up an unfinished unit.
+            actionManager.getAction(timer.getActionId()).filter(IrlAction::isTimed).ifPresent(action ->
+                timer.applyTick(timeSupplier.get(), action).forEach(plugin::addActionXp));
+            activeTimers.remove(timerId);
+            saveTimersLocked();
+            return true;
         }
     }
 
@@ -178,6 +212,10 @@ public class TimerManager
         Map<Skill, Long> earnedBeforePause = Collections.emptyMap();
         synchronized (lock)
         {
+            if (!Objects.equals(loadedProfileId, currentProfileId()))
+            {
+                return false;
+            }
             ActiveTimer timer = activeTimers.get(timerId);
             if (timer == null)
             {
@@ -200,7 +238,7 @@ public class TimerManager
                 // Settle any whole units since the scheduler's last tick before
                 // freezing the timer, so a quick pause/stop cannot lose XP.
                 Optional<IrlAction> action = actionManager.getAction(timer.getActionId());
-                if (action.isPresent())
+                if (action.isPresent() && action.get().isTimed())
                 {
                     earnedBeforePause = timer.applyTick(now, action.get());
                 }
@@ -212,9 +250,9 @@ public class TimerManager
             }
 
             saveTimersLocked();
+            // Keep settlement inside the profile reload boundary.
+            earnedBeforePause.forEach((skill, amount) -> plugin.addActionXp(skill, amount));
         }
-
-        earnedBeforePause.forEach((skill, amount) -> plugin.addActionXp(skill, amount));
         return true;
     }
 
@@ -245,7 +283,7 @@ public class TimerManager
                     continue;
                 }
 
-                IrlAction value = action.get();
+                IrlAction value = timer.getActionSnapshot() == null ? action.get() : timer.getActionSnapshot();
                 snapshots.add(new TimerSnapshot(
                     timer.getId(),
                     value.getName(),
@@ -267,6 +305,12 @@ public class TimerManager
 
         synchronized (lock)
         {
+            // ConfigManager changes its active profile before posting ProfileChanged.
+            // A scheduler tick in that interval must not write the old profile's state.
+            if (!Objects.equals(loadedProfileId, currentProfileId()))
+            {
+                return;
+            }
             List<UUID> missingActions = new ArrayList<>();
 
             for (ActiveTimer timer : activeTimers.values())
@@ -284,7 +328,7 @@ public class TimerManager
                 Map<Skill, Long> earned = timer.applyTick(now, action);
                 for (Map.Entry<Skill, Long> entry : earned.entrySet())
                 {
-                    pendingXp.merge(entry.getKey(), entry.getValue(), Long::sum);
+                    pendingXp.merge(entry.getKey(), entry.getValue(), LongMath::saturatedAdd);
                 }
             }
 
@@ -300,10 +344,7 @@ public class TimerManager
                 saveTimersLocked();
                 ticksSinceSave = 0;
             }
-        }
-
-        if (!pendingXp.isEmpty())
-        {
+            // A profile reload cannot interleave between accruing and crediting XP.
             pendingXp.forEach((skill, amount) -> plugin.addActionXp(skill, amount));
         }
     }
@@ -320,6 +361,7 @@ public class TimerManager
     {
         activeTimers.clear();
         ticksSinceSave = 0;
+        loadedProfileId = currentProfileId();
 
         String raw = configManager.getConfiguration(GokIrlBankedXpConfig.GROUP, CONFIG_KEY);
         if (raw == null || raw.isBlank())
@@ -335,6 +377,10 @@ public class TimerManager
             {
                 for (StoredTimer entry : stored)
                 {
+                    if (entry == null)
+                    {
+                        continue;
+                    }
                     Optional<IrlAction> action = actionManager.getAction(entry.actionId);
                     // Drop timers whose action was deleted, or converted to an
                     // untimed action, while the client was closed.
@@ -351,7 +397,14 @@ public class TimerManager
                         timeSupplier.get(),
                         0L
                     );
-                    timer.alignAwardedUnits(action.get().getSecondsPerUnit());
+                    // Gson bypasses constructors. Rebuild to sanitize nullable fields and mappings.
+                    IrlAction terms = entry.actionSnapshot == null ? action.get() : entry.actionSnapshot.toBuilder().build();
+                    if (!terms.isValid() || !terms.isTimed() || !Objects.equals(terms.getId(), entry.actionId))
+                    {
+                        terms = action.get();
+                    }
+                    timer.bindAction(terms);
+                    timer.alignAwardedUnits(terms.getSecondsPerUnit());
                     activeTimers.put(timer.getId(), timer);
                 }
             }
@@ -366,10 +419,14 @@ public class TimerManager
 
     private void saveTimersLocked()
     {
+        if (!Objects.equals(loadedProfileId, currentProfileId()))
+        {
+            return;
+        }
         List<StoredTimer> stored = new ArrayList<>();
         for (ActiveTimer timer : activeTimers.values())
         {
-            stored.add(new StoredTimer(timer.getId(), timer.getActionId(), timer.getElapsedSeconds(), timer.isPaused()));
+            stored.add(new StoredTimer(timer.getId(), timer.getActionId(), timer.getElapsedSeconds(), timer.isPaused(), timer.getActionSnapshot()));
         }
         String json = gson.toJson(stored);
         configManager.setConfiguration(GokIrlBankedXpConfig.GROUP, CONFIG_KEY, json);
@@ -445,17 +502,20 @@ public class TimerManager
         UUID actionId;
         long elapsedSeconds;
         boolean paused;
+        // Optional for legacy JSON; new saves retain the original earning terms across restart.
+        IrlAction actionSnapshot;
 
         StoredTimer()
         {
         }
 
-        StoredTimer(UUID id, UUID actionId, long elapsedSeconds, boolean paused)
+        StoredTimer(UUID id, UUID actionId, long elapsedSeconds, boolean paused, IrlAction actionSnapshot)
         {
             this.id = id;
             this.actionId = actionId;
             this.elapsedSeconds = elapsedSeconds;
             this.paused = paused;
+            this.actionSnapshot = actionSnapshot;
         }
     }
 }
