@@ -232,7 +232,29 @@ Overlay size and position are not config items — resize the overlay in place w
 - **Build issues:** Run `./gradlew --version` and confirm Gradle sees JDK 11 or newer. Plugin source is compiled for Java 11 to match Plugin Hub requirements.
 
 ## Support
-- Open an issue in this repository if something breaks or a feature is unclear.
+- Use **Report a bug** at the bottom of the IRL XP sidebar. A native window lets
+  you describe the problem, review the report, and send it without opening a
+  browser or signing in to another service.
+- Reports go through the plugin's Railway receiver into the developer's private
+  GitHub inbox. No email address, Discord handle, or RuneScape account name is
+  required. Technical details are optional and previewed before submission;
+  logs, screenshots, and game/account data are not attached automatically.
+- **Save draft** keeps unfinished text on this computer, outside synced RuneLite
+  configuration. Sending saves a recovery copy until the service confirms
+  acceptance. Save unfinished work before disabling the plugin or closing RuneLite.
+  **Discard draft** removes the local copy.
+- An acceptance reference means the report was durably queued for delivery. If
+  acceptance cannot be confirmed, retrying the unchanged saved report reuses its
+  reference to prevent duplicate delivery. Editing it creates a new report.
+- Reporting is optional. Railway processes connection metadata, including your IP
+  address. The receiver does not store IP addresses or include them in issues.
+  Leave personal information out of the free-text fields. Reports are private,
+  but this is not an anonymous communication service.
+- Receiver copies of delivered report text expire after 30 days; undelivered
+  reports remain for recovery, and references remain for duplicate prevention.
+  Private GitHub issues and hosting backups have their own retention. Operator
+  setup, limits, and recovery are documented in [reporting-server/README.md](reporting-server/README.md).
+- If the plugin cannot open at all, you can still open an issue in this repository.
 - Community help is also available in the RuneLite Discord (#plugin-support) for external plugins.
 
 ## Changelog (high level)

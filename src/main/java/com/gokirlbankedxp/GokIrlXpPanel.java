@@ -1,5 +1,6 @@
 package com.gokirlbankedxp;
 
+import com.gokirlbankedxp.reporting.BugReportController;
 import com.gokirlbankedxp.ui.IrlActionsPanel;
 import com.gokirlbankedxp.ui.IrlXpUi;
 import com.gokirlbankedxp.ui.XpMultipliersPanel;
@@ -44,6 +45,7 @@ class GokIrlXpPanel extends PluginPanel
     private final GokIrlBankedXpPanel bankedXpPanel;
     private final IrlActionsPanel actionsPanel;
     private final XpMultipliersPanel multipliersPanel;
+    private final BugReportController bugReports;
     private final CardLayout contentLayout = new CardLayout();
     private final JPanel content = new JPanel(contentLayout);
     private final JLabel sectionDescription = IrlXpUi.mutedLabel("Bank real-world XP.");
@@ -55,11 +57,13 @@ class GokIrlXpPanel extends PluginPanel
     GokIrlXpPanel(
         GokIrlBankedXpPanel bankedXpPanel,
         IrlActionsPanel actionsPanel,
-        XpMultipliersPanel multipliersPanel)
+        XpMultipliersPanel multipliersPanel,
+        BugReportController bugReports)
     {
         this.bankedXpPanel = bankedXpPanel;
         this.actionsPanel = actionsPanel;
         this.multipliersPanel = multipliersPanel;
+        this.bugReports = bugReports;
 
         setLayout(new BorderLayout());
         setBackground(IrlXpUi.BACKGROUND);
@@ -73,6 +77,16 @@ class GokIrlXpPanel extends PluginPanel
         content.add(actionsPanel, ACTIONS_CARD);
         content.add(multipliersPanel, MULTIPLIERS_CARD);
         add(content, BorderLayout.CENTER);
+
+        // Reporting is available from every tab without joining the XP data flow.
+        JButton reportButton = new JButton("Report a bug");
+        IrlXpUi.styleSecondaryButton(reportButton);
+        reportButton.addActionListener(event -> bugReports.open(this));
+        JPanel footer = new JPanel(new BorderLayout());
+        footer.setOpaque(false);
+        footer.setBorder(BorderFactory.createEmptyBorder(0, 10, 10, 10));
+        footer.add(reportButton, BorderLayout.CENTER);
+        add(footer, BorderLayout.SOUTH);
 
         showSection(XP_CARD);
     }
@@ -197,5 +211,6 @@ class GokIrlXpPanel extends PluginPanel
     void stopUiUpdates()
     {
         actionsPanel.stopUiUpdates();
+        bugReports.shutDown();
     }
 }
