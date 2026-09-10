@@ -12,7 +12,6 @@ import java.awt.GridLayout;
 import java.awt.Window;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.text.ParseException;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -36,6 +35,8 @@ import javax.swing.JTextArea;
 import javax.swing.Timer;
 import javax.swing.ListSelectionModel;
 import javax.swing.SwingUtilities;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import net.runelite.api.Skill;
 import net.runelite.client.util.QuantityFormatter;
 
@@ -69,8 +70,8 @@ public class IrlActionsPanel extends JPanel
     // that have no timer to run (and, if the user prefers, for ones that do).
     private final JComboBox<IrlAction> logActionSelector = new JComboBox<>();
     private final JLabel logUnitsLabel = IrlXpUi.mutedLabel("UNITS IN ONE GO");
-    private final JFormattedTextField logUnitsField = new JFormattedTextField(IrlXpUi.positiveLongFormatter());
-    private final JFormattedTextField logRepetitionsField = new JFormattedTextField(IrlXpUi.positiveLongFormatter());
+    private final JFormattedTextField logUnitsField = IrlXpUi.numberField(IrlXpUi.positiveLongFormatter());
+    private final JFormattedTextField logRepetitionsField = IrlXpUi.numberField(IrlXpUi.positiveLongFormatter());
     // Four rows: the preview spells out the total and the resulting XP on
     // separate lines, a multi-skill action needs room to wrap, and a level
     // multiplier adds a line saying what the figures were before it applied.
@@ -284,11 +285,33 @@ public class IrlActionsPanel extends JPanel
         logActionSelector.setRenderer(new ActionNameCellRenderer());
         logActionSelector.addActionListener(e -> onLogSelectionChanged());
 
-        // Recompute the preview from whatever is currently typed. "value" fires
-        // once a field commits, which is enough to keep the estimate honest
-        // without reformatting the text mid-keystroke.
-        logUnitsField.addPropertyChangeListener("value", evt -> refreshLogPreview());
-        logRepetitionsField.addPropertyChangeListener("value", evt -> refreshLogPreview());
+        // Recompute the preview on every keystroke. The preview reads the text
+        // on screen (see parsePositive), so it can follow the document directly
+        // rather than waiting for a commit — a committed value can lag behind
+        // what the user has typed, and a preview that lags is a preview that
+        // shows the wrong figure right before the button is pressed.
+        DocumentListener previewOnEdit = new DocumentListener()
+        {
+            @Override
+            public void insertUpdate(DocumentEvent event)
+            {
+                refreshLogPreview();
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent event)
+            {
+                refreshLogPreview();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent event)
+            {
+                refreshLogPreview();
+            }
+        };
+        logUnitsField.getDocument().addDocumentListener(previewOnEdit);
+        logRepetitionsField.getDocument().addDocumentListener(previewOnEdit);
         logUnitsField.setValue(1L);
         logRepetitionsField.setValue(1L);
         logUnitsField.setToolTipText("How many units one round of this action was worth, e.g. 20 push-ups per set");
@@ -396,6 +419,7 @@ public class IrlActionsPanel extends JPanel
     private void refreshSelectors(List<IrlAction> actions)
     {
         UUID previouslyLogged = selectedActionId(logActionSelector);
+        UUID previouslyTimed = selectedActionId(timerActionSelector);
 
         DefaultComboBoxModel<IrlAction> timerModel = new DefaultComboBoxModel<>();
         DefaultComboBoxModel<IrlAction> logModel = new DefaultComboBoxModel<>();
@@ -408,11 +432,11 @@ public class IrlActionsPanel extends JPanel
             logModel.addElement(action);
         }
 
+        // Both selectors keep the user's choice across a refresh. The list is
+        // rebuilt after every create, edit and delete, and losing the chosen
+        // timer action each time meant starting the wrong one after an edit.
         timerActionSelector.setModel(timerModel);
-        if (timerModel.getSize() > 0)
-        {
-            timerActionSelector.setSelectedIndex(0);
-        }
+        restoreSelection(timerActionSelector, timerModel, previouslyTimed);
 
         logActionSelector.setModel(logModel);
         restoreSelection(logActionSelector, logModel, previouslyLogged);
@@ -580,25 +604,15 @@ public class IrlActionsPanel extends JPanel
      * Reads a formatted field as a positive count.
      *
      * <p>Returns 0 for blank or half-typed input, which the caller treats as
-     * "nothing to bank yet" rather than as an error.</p>
+     * "nothing to bank yet" rather than as an error. Reads the text on screen,
+     * not the field's last committed value: after an invalid edit the committed
+     * value is still the previous good number, and banking that would bank an
+     * amount the user has just deleted.</p>
      */
     private static long parsePositive(JFormattedTextField field)
     {
-        try
-        {
-            field.commitEdit();
-        }
-        catch (ParseException ignored)
-        {
-            // Leaves the last committed value in place; handled below.
-        }
-
-        Object value = field.getValue();
-        if (value instanceof Number)
-        {
-            return Math.max(0L, ((Number) value).longValue());
-        }
-        return 0L;
+        Number value = IrlXpUi.readNumber(field);
+        return value == null ? 0L : Math.max(0L, value.longValue());
     }
 
     private void onPauseTimer()
@@ -631,32 +645,52 @@ public class IrlActionsPanel extends JPanel
         }
     }
 
+    /**
+     * Rebuilds the timer list from the manager's current snapshots.
+     *
+     * <p>Runs immediately when already on the EDT. The pause, resume and stop
+     * handlers call this and then read the selected snapshot back to decide
+     * which buttons to enable; if the rebuild were queued instead, that read
+     * would still see the snapshot from before the click, and Resume stayed
+     * greyed out for up to a second after pressing Pause.</p>
+     */
     private void refreshActiveTimers(boolean preserveSelection)
     {
-        SwingUtilities.invokeLater(() -> {
-            UUID selectedId = preserveSelection ? getSelectedTimerId() : null;
+        if (SwingUtilities.isEventDispatchThread())
+        {
+            rebuildActiveTimers(preserveSelection);
+        }
+        else
+        {
+            SwingUtilities.invokeLater(() -> rebuildActiveTimers(preserveSelection));
+        }
+    }
 
-            activeTimersModel.clear();
-            List<TimerManager.TimerSnapshot> timers = timerManager.getTimerSnapshots();
-            for (TimerManager.TimerSnapshot snapshot : timers)
-            {
-                activeTimersModel.addElement(snapshot);
-            }
+    /** The EDT-only body of {@link #refreshActiveTimers}. */
+    private void rebuildActiveTimers(boolean preserveSelection)
+    {
+        UUID selectedId = preserveSelection ? getSelectedTimerId() : null;
 
-            if (selectedId != null)
+        activeTimersModel.clear();
+        List<TimerManager.TimerSnapshot> timers = timerManager.getTimerSnapshots();
+        for (TimerManager.TimerSnapshot snapshot : timers)
+        {
+            activeTimersModel.addElement(snapshot);
+        }
+
+        if (selectedId != null)
+        {
+            for (int i = 0; i < activeTimersModel.size(); i++)
             {
-                for (int i = 0; i < activeTimersModel.size(); i++)
+                if (activeTimersModel.get(i).id().equals(selectedId))
                 {
-                    if (activeTimersModel.get(i).id().equals(selectedId))
-                    {
-                        activeTimersList.setSelectedIndex(i);
-                        break;
-                    }
+                    activeTimersList.setSelectedIndex(i);
+                    break;
                 }
             }
+        }
 
-            activeTimersList.repaint();
-        });
+        activeTimersList.repaint();
     }
 
     private UUID getSelectedTimerId()

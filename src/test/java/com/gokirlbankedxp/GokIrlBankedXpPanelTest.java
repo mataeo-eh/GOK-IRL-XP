@@ -27,6 +27,22 @@ class GokIrlBankedXpPanelTest
         assertEquals(1250L, GokIrlBankedXpPanel.parsePositiveXp(" 1250 "));
     }
 
+    /** People type XP the way the game prints it; the separator must not be a rejection. */
+    @Test
+    void acceptsThousandsSeparators()
+    {
+        assertEquals(1250L, GokIrlBankedXpPanel.parsePositiveXp("1,250"));
+        assertEquals(1_000_000L, GokIrlBankedXpPanel.parsePositiveXp("1,000,000"));
+    }
+
+    /** A number followed by junk is not that number; it is a typo to report. */
+    @Test
+    void rejectsTrailingText()
+    {
+        assertEquals(0L, GokIrlBankedXpPanel.parsePositiveXp("1250xp"));
+        assertEquals(0L, GokIrlBankedXpPanel.parsePositiveXp("12.5"));
+    }
+
     @Test
     void rejectsInvalidXpWithoutThrowing()
     {

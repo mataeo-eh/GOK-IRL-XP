@@ -5,11 +5,15 @@ import java.awt.Component;
 import java.awt.Cursor;
 import java.awt.Font;
 import java.text.NumberFormat;
+import java.text.ParseException;
+import java.text.ParsePosition;
 import java.util.Locale;
+import java.util.OptionalLong;
 import javax.swing.BorderFactory;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.JButton;
 import javax.swing.JComponent;
+import javax.swing.JFormattedTextField;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
@@ -160,14 +164,21 @@ public final class IrlXpUi
      * Creates the formatter used by every positive-XP input.
      *
      * <p>Invalid intermediate text is allowed so an empty field accepts normal
-     * typing. Callers validate the completed value with commitEdit().</p>
+     * typing. The value is judged when it is read back through
+     * {@link #readNumber}, and only text that parses <em>completely</em> counts:
+     * see {@link StrictNumberFormatter} for why "1,000" and "12abc" must not be
+     * quietly read as 1 and 12.</p>
+     *
+     * <p>The field displays plain digits, but the parser accepts thousands
+     * separators, so a user may type either {@code 1000} or {@code 1,000}.</p>
      */
     public static NumberFormatter positiveLongFormatter()
     {
-        NumberFormat numberFormat = NumberFormat.getIntegerInstance(Locale.US);
-        numberFormat.setGroupingUsed(false);
-        NumberFormatter formatter = new NumberFormatter(numberFormat);
-        formatter.setAllowsInvalid(true);
+        NumberFormat display = NumberFormat.getIntegerInstance(Locale.US);
+        display.setGroupingUsed(false);
+        NumberFormat parser = NumberFormat.getIntegerInstance(Locale.US);
+        parser.setGroupingUsed(true);
+        StrictNumberFormatter formatter = new StrictNumberFormatter(display, parser);
         formatter.setMinimum(1L);
         formatter.setValueClass(Long.class);
         return formatter;
@@ -182,22 +193,108 @@ public final class IrlXpUi
      * negatives are impossible, since XP already banked must never be reduced by
      * banking more. The ceiling is a typo guard, not a game rule.</p>
      *
+     * <p>Grouping is off for parsing too: multipliers never reach a thousand,
+     * and a stray comma in a decimal is far more likely a typo than a separator.</p>
+     *
      * @param maximum the largest multiplier the editor will accept
      */
     public static NumberFormatter multiplierFormatter(double maximum)
     {
-        NumberFormat numberFormat = NumberFormat.getNumberInstance(Locale.US);
-        numberFormat.setGroupingUsed(false);
-        numberFormat.setMinimumFractionDigits(0);
+        NumberFormat display = NumberFormat.getNumberInstance(Locale.US);
+        display.setGroupingUsed(false);
+        display.setMinimumFractionDigits(0);
         // Two places is enough to express the multipliers people actually pick
         // (1.5x, 2.25x) without inviting values that round to nothing in use.
-        numberFormat.setMaximumFractionDigits(2);
-        NumberFormatter formatter = new NumberFormatter(numberFormat);
-        formatter.setAllowsInvalid(true);
+        display.setMaximumFractionDigits(2);
+        NumberFormat parser = NumberFormat.getNumberInstance(Locale.US);
+        parser.setGroupingUsed(false);
+        StrictNumberFormatter formatter = new StrictNumberFormatter(display, parser);
         formatter.setMinimum(0.0);
         formatter.setMaximum(maximum);
         formatter.setValueClass(Double.class);
         return formatter;
+    }
+
+    /**
+     * Builds a numeric field that never silently rewrites what the user typed.
+     *
+     * <p>{@link JFormattedTextField}'s default focus-lost policy is
+     * {@code COMMIT_OR_REVERT}: when the text does not parse, the field snaps
+     * back to its last good value the moment focus leaves it. A user who typed
+     * {@code 0} into "seconds per unit" and clicked Save watched the field
+     * revert to {@code 60} and the action save with 60 — or did not watch, and
+     * only found out later. With {@code COMMIT}, unparseable text stays on
+     * screen, and {@link #readNumber} reports it as invalid so the form shows an
+     * error instead.</p>
+     */
+    public static JFormattedTextField numberField(NumberFormatter formatter)
+    {
+        JFormattedTextField field = new JFormattedTextField(formatter);
+        field.setFocusLostBehavior(JFormattedTextField.COMMIT);
+        return field;
+    }
+
+    /**
+     * Reads the number currently shown in a formatted field.
+     *
+     * <p>Deliberately reads the <em>text</em> through the field's own formatter
+     * rather than {@link JFormattedTextField#getValue()}. The value is only
+     * updated by a successful commit, so after the user types something invalid
+     * it still holds the previous good number — exactly the figure that must
+     * not be acted on. Reading the text has no side effects either, so this is
+     * safe to call from a document listener while the user is typing.</p>
+     *
+     * @return the number on screen, or null when the text is blank, not a
+     *     number, or outside the formatter's range
+     */
+    public static Number readNumber(JFormattedTextField field)
+    {
+        JFormattedTextField.AbstractFormatter formatter = field.getFormatter();
+        if (formatter == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            Object value = formatter.stringToValue(field.getText());
+            return value instanceof Number ? (Number) value : null;
+        }
+        catch (ParseException ex)
+        {
+            return null;
+        }
+    }
+
+    /**
+     * Parses a whole number typed into a plain text field, such as the sidebar's
+     * XP amount box.
+     *
+     * <p>Uses the same rules as the formatted fields: the whole string must be a
+     * number, thousands separators are accepted ({@code 1,000}), and anything
+     * that does not fit in a {@code long} is rejected rather than clamped.</p>
+     *
+     * @return the number, or empty when the text is not one
+     */
+    public static OptionalLong parseWholeNumber(String text)
+    {
+        String trimmed = text == null ? "" : text.trim();
+        if (trimmed.isEmpty())
+        {
+            return OptionalLong.empty();
+        }
+
+        NumberFormat parser = NumberFormat.getIntegerInstance(Locale.US);
+        parser.setGroupingUsed(true);
+        ParsePosition position = new ParsePosition(0);
+        Number parsed = parser.parse(trimmed, position);
+        // DecimalFormat only returns a Long when the value is integral and fits;
+        // anything else came back as a Double and is not a usable whole number.
+        if (!(parsed instanceof Long) || position.getIndex() != trimmed.length())
+        {
+            return OptionalLong.empty();
+        }
+        return OptionalLong.of(parsed.longValue());
     }
 
     /** Renders a multiplier the way the editor and the sidebar both show it. */

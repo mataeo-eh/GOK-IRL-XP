@@ -143,6 +143,31 @@ class BankedXpAdjustmentTest
             contains("Agility banked XP is nearly gone"));
     }
 
+    /**
+     * In combat the learned rate moves on every hit, so the forecast can dip
+     * back under the balance right after a warning. That must not count as a
+     * recovery: the balance only ever falls between deposits, and re-arming on
+     * a forecast wobble fired the red flash on every other drop all the way down.
+     */
+    @Test
+    void aFluctuatingForecastDoesNotRepeatTheWarning()
+    {
+        Fixture fixture = new Fixture();
+        fixture.plugin.addManualXp(Skill.WOODCUTTING, 1_000L);
+
+        // Five drops of 100 leave 500 against a forecast of 500: warned once.
+        fixture.gainXp(Skill.WOODCUTTING, 100, 5);
+        verify(fixture.notifier, times(1)).notify(any(Notification.class), anyString());
+
+        // A small drop pulls the average down: 490 left against a forecast of
+        // 410, which the old code read as "recovered" and re-armed on.
+        fixture.gainXp(Skill.WOODCUTTING, 10, 1);
+        // The next normal drop puts the forecast back over the balance.
+        fixture.gainXp(Skill.WOODCUTTING, 100, 1);
+
+        verify(fixture.notifier, times(1)).notify(any(Notification.class), anyString());
+    }
+
     @Test
     void toppingUpReArmsTheWarning()
     {

@@ -73,6 +73,46 @@ class TimerManagerRegressionTest
         assertEquals(Long.MAX_VALUE, f.awarded.get());
     }
 
+    /**
+     * scheduleAtFixedRate silently cancels a task the first time it throws. The
+     * scheduled entry point therefore has to swallow the failure, or one bad
+     * award would stop every timer until the plugin was restarted.
+     */
+    @Test
+    void aFailingAwardDoesNotStopTheScheduledTick()
+    {
+        Fixture f = new Fixture();
+        IrlAction action = f.actions.createAction(action(1, 10));
+        UUID timerId = f.timers.startTimer(action.getId()).orElseThrow();
+        doThrow(new IllegalStateException("config write failed"))
+            .when(f.plugin).addActionXp(any(Skill.class), anyLong());
+
+        f.clock.addAndGet(1000);
+        // The raw tick does propagate the failure; the scheduled wrapper must not.
+        assertThrows(IllegalStateException.class, f.timers::tick);
+        f.clock.addAndGet(1000);
+        assertDoesNotThrow(f.timers::runScheduledTick);
+
+        // The timer is still there and still counting afterwards.
+        assertEquals(timerId, f.timers.getActiveTimers().get(0).getId());
+        assertEquals(2L, f.timers.getActiveTimers().get(0).getElapsedSeconds());
+    }
+
+    /** A renamed action shows its new name on its running timer; the frozen rates stay. */
+    @Test
+    void timerSnapshotsShowTheLiveActionNameWithTheFrozenTerms()
+    {
+        Fixture f = new Fixture();
+        IrlAction original = f.actions.createAction(action(60, 10));
+        f.timers.startTimer(original.getId()).orElseThrow();
+
+        f.actions.updateAction(original.toBuilder().name("Renamed").skillMappings(Map.of(Skill.AGILITY, 999L)).build());
+
+        TimerManager.TimerSnapshot snapshot = f.timers.getTimerSnapshots().get(0);
+        assertEquals("Renamed", snapshot.actionName());
+        assertEquals("Agility +10/unit", snapshot.formatRates());
+    }
+
     @Test
     void nullPersistedTimerMustNotPreventStartup()
     {

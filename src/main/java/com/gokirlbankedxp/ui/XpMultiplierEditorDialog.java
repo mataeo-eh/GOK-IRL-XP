@@ -11,7 +11,6 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.awt.Window;
-import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -31,6 +30,8 @@ import javax.swing.JScrollPane;
 import javax.swing.JSpinner;
 import javax.swing.JTextArea;
 import javax.swing.SpinnerNumberModel;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import net.runelite.api.Skill;
 
 /**
@@ -328,8 +329,11 @@ class XpMultiplierEditorDialog extends JDialog
 
             if (Double.isNaN(multiplier))
             {
-                markInvalid(row.multiplierField,
-                    "Threshold " + row.index + ": enter a multiplier of 0 or more.");
+                // Blank, not a number, or outside the range the field enforces:
+                // all three read back as NaN, so the message covers all three.
+                markInvalid(row.multiplierField, String.format(Locale.US,
+                    "Threshold %d: enter a multiplier between %.0f and %.0f.",
+                    row.index, XpMultiplierTier.MIN_MULTIPLIER, XpMultiplierTier.MAX_MULTIPLIER));
                 return null;
             }
 
@@ -365,10 +369,9 @@ class XpMultiplierEditorDialog extends JDialog
      */
     private void refreshSummary()
     {
-        // Reading a row commits its editor, which can fire the very "value"
-        // listener that called this method. One level of re-entry is harmless but
-        // pointless, so the second pass is dropped: the outer one is still
-        // running and will read the committed value anyway.
+        // Reading rows has no side effects now that it reads text rather than
+        // committing, but the guard stays as a cheap safety net against any
+        // listener that re-enters while the summary is being rebuilt.
         if (refreshingSummary)
         {
             return;
@@ -495,7 +498,7 @@ class XpMultiplierEditorDialog extends JDialog
             XpMultiplierTier.MAX_LEVEL,
             1));
         private final JFormattedTextField multiplierField =
-            new JFormattedTextField(IrlXpUi.multiplierFormatter(XpMultiplierTier.MAX_MULTIPLIER));
+            IrlXpUi.numberField(IrlXpUi.multiplierFormatter(XpMultiplierTier.MAX_MULTIPLIER));
 
         TierRow(int index)
         {
@@ -540,7 +543,29 @@ class XpMultiplierEditorDialog extends JDialog
             multiplierField.setToolTipText(
                 "Banked XP is multiplied by this. 2 means double, 0.5 means half, 0 means nothing is banked.");
             IrlXpUi.styleField(multiplierField);
-            multiplierField.addPropertyChangeListener("value", e -> refreshSummary());
+            // Follow the text, not the committed value: readMultiplier() reads
+            // what is on screen, so the summary can update as the user types
+            // instead of only once the field commits.
+            multiplierField.getDocument().addDocumentListener(new DocumentListener()
+            {
+                @Override
+                public void insertUpdate(DocumentEvent event)
+                {
+                    refreshSummary();
+                }
+
+                @Override
+                public void removeUpdate(DocumentEvent event)
+                {
+                    refreshSummary();
+                }
+
+                @Override
+                public void changedUpdate(DocumentEvent event)
+                {
+                    refreshSummary();
+                }
+            });
             panel.add(multiplierField, gc);
 
             gc.gridx = 5;
@@ -573,30 +598,18 @@ class XpMultiplierEditorDialog extends JDialog
         /**
          * The typed multiplier.
          *
-         * <p>Commits the editor first, because a field the user is still typing in
-         * holds its last committed value, not what is on screen — saving without
-         * this would silently store a stale number.</p>
+         * <p>Reads the text on screen rather than the field's committed value. A
+         * field the user is still typing in holds its last committed value, not
+         * what is shown — and after an invalid edit the committed value is the
+         * previous good number, which is exactly what must not be saved.</p>
          *
-         * @return the value, or NaN when the text is not a usable number
+         * @return the value, or NaN when the text is blank, not a number, or
+         *     outside the range the field enforces
          */
         double readMultiplier()
         {
-            try
-            {
-                multiplierField.commitEdit();
-            }
-            catch (ParseException ex)
-            {
-                return Double.NaN;
-            }
-
-            Object value = multiplierField.getValue();
-            if (!(value instanceof Number))
-            {
-                return Double.NaN;
-            }
-
-            return ((Number) value).doubleValue();
+            Number value = IrlXpUi.readNumber(multiplierField);
+            return value == null ? Double.NaN : value.doubleValue();
         }
     }
 }

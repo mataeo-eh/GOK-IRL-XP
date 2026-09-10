@@ -16,6 +16,7 @@ import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.OptionalLong;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import javax.swing.BorderFactory;
@@ -537,7 +538,28 @@ class GokIrlBankedXpPanel extends JPanel
             return;
         }
 
-        plugin.addManualXp(selectedSkill, xp);
+        long banked = plugin.addManualXp(selectedSkill, xp);
+        if (banked <= 0)
+        {
+            // The deposit was accepted but moved nothing. The only ordinary way
+            // that happens is a 0.00x tier; saying so here beats a field that
+            // clears itself as though the XP had gone somewhere.
+            boolean zeroTier = multiplierManager.currentMultiplier(selectedSkill) == 0.0;
+            JOptionPane.showMessageDialog(
+                this,
+                zeroTier
+                    ? String.format(
+                        Locale.US,
+                        "Nothing was banked: %s is set to 0.00x at your level. "
+                            + "Change that on the LEVEL MULTIPLIERS tab.",
+                        selectedSkill.getName())
+                    : "Nothing was banked. Please try again.",
+                "Nothing banked",
+                JOptionPane.INFORMATION_MESSAGE
+            );
+            return;
+        }
+
         xpField.setText("");
         xpField.requestFocusInWindow();
     }
@@ -617,23 +639,23 @@ class GokIrlBankedXpPanel extends JPanel
         removeXpField.requestFocusInWindow();
     }
 
-    /** Parses user-entered XP without relying on formatted-field edit state. */
+    /**
+     * Parses user-entered XP without relying on formatted-field edit state.
+     *
+     * <p>Shares the plugin's one number parser, so "1,000" is accepted here just
+     * as it is in the action editor, and anything that is not entirely a whole
+     * number reads as 0 rather than as its leading digits.</p>
+     *
+     * @return the amount, or 0 when the text is not a positive whole number
+     */
     static long parsePositiveXp(String text)
     {
-        if (text == null || text.trim().isEmpty())
+        OptionalLong parsed = IrlXpUi.parseWholeNumber(text);
+        if (parsed.isEmpty() || parsed.getAsLong() <= 0)
         {
             return 0L;
         }
-
-        try
-        {
-            long value = Long.parseLong(text.trim());
-            return value > 0 ? value : 0L;
-        }
-        catch (NumberFormatException ignored)
-        {
-            return 0L;
-        }
+        return parsed.getAsLong();
     }
 
     /**

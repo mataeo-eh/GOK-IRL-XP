@@ -342,8 +342,15 @@ public class GokIrlBankedXpPlugin extends Plugin
         if (forecast <= 0 || remaining > forecast)
         {
             // Either no rate learned yet, or comfortably more than the next
-            // `window` actions will consume. Re-arm so a later dip warns again.
-            depletionWarnedSkills.remove(skill);
+            // `window` actions will consume.
+            //
+            // Deliberately not re-armed here. A drop only ever lowers the
+            // balance, so the only way this branch is reached after a warning
+            // is the forecast itself moving — and in combat it moves on every
+            // hit. Re-arming on that flip meant the red flash fired again on
+            // the very next drop, then again, all the way down. The warning is
+            // once per top-up: a deposit, a removal, a reload, or the skill
+            // running dry (below) is what re-arms it.
             return null;
         }
 
@@ -451,6 +458,15 @@ public class GokIrlBankedXpPlugin extends Plugin
         {
             needsRefresh = true;
         }
+        else if ("levelMultipliersEnabled".equals(event.getKey()))
+        {
+            // The master switch changes what every deposit is worth, and the
+            // sidebar states that figure in two places: the deposit preview and
+            // the multipliers tab. Neither hears about settings changes on its
+            // own, so without this they kept quoting the old multiplier until
+            // the next XP drop happened to refresh them.
+            needsRefresh = true;
+        }
         else if ("depletionWarningActions".equals(event.getKey()))
         {
             // A new window means a new prediction, so any standing warning is
@@ -494,6 +510,21 @@ public class GokIrlBankedXpPlugin extends Plugin
             loadStoredXp();
             depletionForecaster.clear();
         });
+
+        // The level tracker was just reloaded from the new profile's config,
+        // which may never have seen this character. The XP baseline is session
+        // state that belongs to the logged-in character, not the profile, so it
+        // is still correct — and without feeding it back in, the first deposit
+        // into each skill after a switch was multiplied as though the player
+        // were level 1. Copied out first so the tracker's config writes (one
+        // per changed level) never happen under the data lock.
+        Map<Skill, Integer> knownXp;
+        synchronized (dataLock)
+        {
+            knownXp = new EnumMap<>(lastKnownXp);
+        }
+        knownXp.forEach(skillLevelTracker::recordExperience);
+
         // Refresh every visible library, including an already-open multipliers tab.
         SwingUtilities.invokeLater(panel::refreshActions);
         rebuildSnapshotAndNotify();

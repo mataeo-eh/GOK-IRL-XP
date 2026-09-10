@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.gokirlbankedxp.service.BankedXpStore;
@@ -14,6 +15,7 @@ import com.google.gson.Gson;
 import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.Map;
+import javax.swing.SwingUtilities;
 import net.runelite.api.Client;
 import net.runelite.api.Experience;
 import net.runelite.api.Skill;
@@ -21,6 +23,7 @@ import net.runelite.api.events.StatChanged;
 import net.runelite.client.Notifier;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.config.Notification;
+import net.runelite.client.events.ConfigChanged;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -147,12 +150,34 @@ class LevelMultiplierBankingTest
         assertEquals(400L, fixture.plugin.addManualXp(Skill.HERBLORE, 100L));
     }
 
+    /**
+     * The master switch lives in RuneLite's settings panel, which the sidebar
+     * cannot see. Flipping it has to push a fresh snapshot so the deposit
+     * preview and the multipliers tab stop quoting the old multiplier.
+     */
+    @Test
+    void togglingTheMasterSwitchRefreshesTheSidebar() throws Exception
+    {
+        Fixture fixture = new Fixture();
+
+        ConfigChanged event = new ConfigChanged();
+        event.setGroup(GokIrlBankedXpConfig.GROUP);
+        event.setKey("levelMultipliersEnabled");
+        event.setNewValue("false");
+        fixture.plugin.onConfigChanged(event);
+
+        // The snapshot is handed to the panel through invokeLater; let it land.
+        SwingUtilities.invokeAndWait(() -> { });
+        verify(fixture.panel).updateSnapshot(any());
+    }
+
     /** A plugin wired to mocks, with real multiplier services behind it. */
     private static final class Fixture
     {
         private final GokIrlBankedXpPlugin plugin = new GokIrlBankedXpPlugin();
         private final GokIrlBankedXpConfig config = mock(GokIrlBankedXpConfig.class);
         private final TestMultipliers multipliers = new TestMultipliers();
+        private final GokIrlXpPanel panel = mock(GokIrlXpPanel.class);
         private final Map<String, String> stored = new HashMap<>();
 
         Fixture()
@@ -171,7 +196,7 @@ class LevelMultiplierBankingTest
             // the genuine save path without touching the developer's ~/.runelite.
             set("bankedXpStore", new BankedXpStore(inMemoryConfigManager(stored), new Gson(), TestDataDir.create()));
             set("client", mock(Client.class));
-            set("panel", mock(GokIrlXpPanel.class));
+            set("panel", panel);
             set("skillLevelTracker", multipliers.levelTracker);
             set("xpMultiplierManager", multipliers.multiplierManager);
         }

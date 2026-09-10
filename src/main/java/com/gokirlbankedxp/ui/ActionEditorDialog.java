@@ -9,7 +9,6 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.awt.Window;
-import java.text.ParseException;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -44,8 +43,8 @@ class ActionEditorDialog extends JDialog
     private final JComboBox<String> unitCombo = new JComboBox<>();
     private final JCheckBox timedCheck = new JCheckBox("Run this action on a timer");
     private final JLabel secondsLabel = fieldLabel("Seconds per unit");
-    private final JFormattedTextField secondsPerUnitField = new JFormattedTextField(IrlXpUi.positiveLongFormatter());
-    private final JFormattedTextField defaultXpField = new JFormattedTextField(IrlXpUi.positiveLongFormatter());
+    private final JFormattedTextField secondsPerUnitField = IrlXpUi.numberField(IrlXpUi.positiveLongFormatter());
+    private final JFormattedTextField defaultXpField = IrlXpUi.numberField(IrlXpUi.positiveLongFormatter());
     private final JLabel errorLabel = new JLabel(" ");
     private final Map<Skill, SkillRow> skillRows = new LinkedHashMap<>();
     private final Map<String, Long> savedUnits;
@@ -466,23 +465,20 @@ class ActionEditorDialog extends JDialog
         return label;
     }
 
+    /**
+     * Reads a field as the number on screen, or 0 when that text is not a valid
+     * positive whole number.
+     *
+     * <p>This used to commit the field and then read its value. A commit that
+     * fails leaves the value at the last number that did parse, so typing
+     * {@code 0} or clearing the box read back as the previous figure and the
+     * action saved with a duration or rate the user had just deleted. Reading
+     * the text directly means what is shown is what is saved.</p>
+     */
     private long parseLong(JFormattedTextField field)
     {
-        try
-        {
-            field.commitEdit();
-        }
-        catch (ParseException ignored)
-        {
-            // handled below
-        }
-
-        Object value = field.getValue();
-        if (value instanceof Number)
-        {
-            return ((Number) value).longValue();
-        }
-        return 0L;
+        Number value = IrlXpUi.readNumber(field);
+        return value == null ? 0L : value.longValue();
     }
 
     private class SkillRow
@@ -495,7 +491,7 @@ class ActionEditorDialog extends JDialog
         SkillRow(Skill skill, NumberFormatter formatter)
         {
             this.skillCheck = new JCheckBox(skill.getName());
-            this.xpField = new JFormattedTextField(formatter);
+            this.xpField = IrlXpUi.numberField(formatter);
             this.useDefault = new JCheckBox("Use default");
 
             xpField.setColumns(7);

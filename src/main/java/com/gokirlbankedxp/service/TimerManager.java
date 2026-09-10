@@ -115,7 +115,35 @@ public class TimerManager
         // being toggled off and on) from stacking a second ticking task.
         if (executor != null && tickFuture == null)
         {
-            tickFuture = executor.scheduleAtFixedRate(this::tick, 1, 1, TimeUnit.SECONDS);
+            tickFuture = executor.scheduleAtFixedRate(this::runScheduledTick, 1, 1, TimeUnit.SECONDS);
+        }
+    }
+
+    /**
+     * The entry point the scheduler calls once a second.
+     *
+     * <p>{@link ScheduledExecutorService#scheduleAtFixedRate} cancels a task for
+     * good the first time it throws, and does so silently. Without this guard a
+     * single failure anywhere under {@link #tick()} — a config write that threw,
+     * a listener on the event bus, a disk error surfacing as a runtime exception
+     * — would stop every timer until the plugin was restarted, with nothing on
+     * screen to say why. The failure is logged and the next second's tick runs
+     * as normal.</p>
+     *
+     * <p>A unit whose award threw is not re-awarded: the timer had already
+     * counted it as paid before the exception. That loses at most one unit's XP
+     * on an error that should never happen, against timers that otherwise stop
+     * for the whole session.</p>
+     */
+    void runScheduledTick()
+    {
+        try
+        {
+            tick();
+        }
+        catch (RuntimeException ex)
+        {
+            log.warn("Timer tick failed; timers will keep running", ex);
         }
     }
 
@@ -283,14 +311,19 @@ public class TimerManager
                     continue;
                 }
 
-                IrlAction value = timer.getActionSnapshot() == null ? action.get() : timer.getActionSnapshot();
+                // The rates and unit come from the frozen terms the timer is
+                // actually paying out at, so what is shown matches what is
+                // earned even after the action was edited. The name is the
+                // live one: a renamed action should not keep its old name in
+                // the timer list, and the name changes nothing about the XP.
+                IrlAction terms = timer.getActionSnapshot() == null ? action.get() : timer.getActionSnapshot();
                 snapshots.add(new TimerSnapshot(
                     timer.getId(),
-                    value.getName(),
+                    action.get().getName(),
                     timer.getDisplayElapsedSeconds(now),
                     timer.isPaused(),
-                    value.getSkillMappings(),
-                    value.getUnitName()
+                    terms.getSkillMappings(),
+                    terms.getUnitName()
                 ));
             }
         }
