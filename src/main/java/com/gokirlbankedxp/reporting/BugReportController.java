@@ -186,7 +186,10 @@ public final class BugReportController
                 SwingUtilities.invokeLater(() ->
                 {
                     panel.load(BugReport.empty());
-                    setBusy(false, "Report accepted for delivery. Reference: " + report.getSubmissionId()
+                    // Shown only after the server's receipt echoed this exact ID, so
+                    // "submitted successfully" is a verified claim, not an optimistic one.
+                    setBusy(false, "Thanks! Your bug report was submitted successfully. Reference: "
+                        + report.getSubmissionId()
                         + (cleared ? "" : ". The local recovery copy could not be deleted; use Discard draft to remove it."));
                 });
             });
