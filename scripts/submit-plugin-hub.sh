@@ -69,7 +69,10 @@ if git remote get-url upstream >/dev/null 2>&1; then
 else
     git remote add upstream https://github.com/runelite/plugin-hub.git
 fi
-git fetch origin '+refs/heads/*:refs/remotes/origin/*' --depth 1
+# A shallow clone initially maps only its default branch. Expand that mapping
+# so force-with-lease can resolve the existing submission branch's fetched tip.
+git config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+git fetch origin --depth 1
 git fetch upstream master --depth 1
 git switch -c gok-irl-xp upstream/master
 [[ -f plugins/gok-irl-xp ]] || { echo 'Plugin Hub manifest is missing' >&2; exit 1; }
