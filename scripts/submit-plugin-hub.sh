@@ -63,7 +63,12 @@ trap 'rm -rf "$release_temp"' EXIT
 cd "$release_temp"
 gh repo clone "$owner/plugin-hub" plugin-hub -- --depth 1
 cd plugin-hub
-git remote add upstream https://github.com/runelite/plugin-hub.git
+# gh repo clone may already add upstream when cloning a fork.
+if git remote get-url upstream >/dev/null 2>&1; then
+    git remote set-url upstream https://github.com/runelite/plugin-hub.git
+else
+    git remote add upstream https://github.com/runelite/plugin-hub.git
+fi
 git fetch origin '+refs/heads/*:refs/remotes/origin/*' --depth 1
 git fetch upstream master --depth 1
 git switch -c gok-irl-xp upstream/master
