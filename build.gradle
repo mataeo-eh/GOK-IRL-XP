@@ -32,7 +32,46 @@ dependencies {
 }
 
 group = 'com.gokirlbankedxp'
-version = '0.0.1'
+// RuneLite and local JARs use the same version, rather than two drifting numbers.
+def pluginPropertiesFile = file('runelite-plugin.properties')
+def pluginProperties = new Properties()
+pluginPropertiesFile.withInputStream { pluginProperties.load(it) }
+version = pluginProperties.getProperty('version')
+
+tasks.register('printPluginVersion') {
+    group = 'release'
+    description = 'Print the version selected for the next Plugin Hub submission.'
+    doLast { println project.version }
+}
+
+// Invoked only by the release workflow, never by ordinary builds. Properties
+// handles the actual Java property syntax; no text or regex replacement is used.
+tasks.register('bumpPluginVersion') {
+    group = 'release'
+    description = 'Increment the release version using -PreleaseBump=patch|minor|major.'
+    doLast {
+        def bump = providers.gradleProperty('releaseBump').getOrElse('patch')
+        if (!(bump in ['patch', 'minor', 'major'])) {
+            throw new GradleException('releaseBump must be patch, minor or major')
+        }
+        def parts = pluginProperties.getProperty('version').tokenize('.')
+        if (parts.size() != 3 || parts.join('.') != pluginProperties.getProperty('version')
+            || parts.any { !it.isInteger() || it.toInteger() < 0 }) {
+            throw new GradleException('Plugin version must be three non-negative integers')
+        }
+        def numbers = parts.collect { it.toInteger() }
+        def index = ['major': 0, 'minor': 1, 'patch': 2][bump]
+        numbers[index] = Math.addExact(numbers[index], 1)
+        for (int i = index + 1; i < numbers.size(); i++) {
+            numbers[i] = 0
+        }
+        pluginProperties.setProperty('version', numbers.join('.'))
+        pluginPropertiesFile.withOutputStream {
+            pluginProperties.store(it, 'IRL XP Plugin Hub metadata')
+        }
+        println "Plugin version: ${pluginProperties.getProperty('version')}"
+    }
+}
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
