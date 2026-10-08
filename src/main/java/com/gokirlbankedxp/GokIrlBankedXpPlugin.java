@@ -3,6 +3,7 @@ package com.gokirlbankedxp;
 import com.google.common.math.LongMath;
 import com.google.inject.Provides;
 import com.gokirlbankedxp.service.BankedXpStore;
+import com.gokirlbankedxp.service.BankedXpMilestones;
 import com.gokirlbankedxp.service.DepletionForecaster;
 import com.gokirlbankedxp.service.IrlActionManager;
 import com.gokirlbankedxp.service.SkillLevelTracker;
@@ -37,6 +38,7 @@ import net.runelite.client.config.ConfigProfile;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.events.ProfileChanged;
+import net.runelite.client.events.OverlayMenuClicked;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.ClientToolbar;
@@ -57,6 +59,7 @@ public class GokIrlBankedXpPlugin extends Plugin
     private static final BufferedImage NAV_ICON = buildIcon();
 
     private final Object dataLock = new Object();
+    private final BankedXpMilestones milestones = new BankedXpMilestones();
     /**
      * The balance of every skill that has one. Positive is XP banked and waiting
      * to be spent in-game; negative is XP owed, because in-game gains outran what
@@ -169,6 +172,37 @@ public class GokIrlBankedXpPlugin extends Plugin
         return configManager.getConfig(GokIrlBankedXpConfig.class);
     }
 
+    /** Both sidebar and RuneLite settings edit the same persisted checkbox. */
+    public boolean isOverlayShown()
+    {
+        return config.showOverlay();
+    }
+
+    public void setOverlayShown(boolean shown)
+    {
+        if (isProfileCurrent())
+        {
+            configManager.setConfiguration(GokIrlBankedXpConfig.GROUP, "showOverlay", shown);
+        }
+    }
+
+    public List<String> getMilestoneLines()
+    {
+        return isProfileCurrent() ? milestones.getLines() : Collections.emptyList();
+    }
+
+    /** Check overlay identity and typed menu fields so unrelated overlay clicks do nothing. */
+    @Subscribe
+    public void onOverlayMenuClicked(OverlayMenuClicked event)
+    {
+        if (event.getOverlay() == overlay
+            && event.getEntry().getMenuAction() == net.runelite.api.MenuAction.RUNELITE_OVERLAY
+            && GokIrlBankedXpOverlay.DISMISS_MILESTONES.equals(event.getEntry().getOption()))
+        {
+            milestones.clear();
+        }
+    }
+
     @Override
     protected void startUp()
     {
@@ -223,6 +257,7 @@ public class GokIrlBankedXpPlugin extends Plugin
         // plugin relearns them from the first few drops rather than acting on
         // rates from whatever the user was training hours ago.
         depletionForecaster.clear();
+        milestones.clear();
         loginSyncTicksRemaining = 0;
         synchronized (dataLock)
         {
@@ -283,10 +318,13 @@ public class GokIrlBankedXpPlugin extends Plugin
                 return;
             }
 
+            long previousBalance = storedXp.getOrDefault(skill, 0L);
             changed = subtractXpLocked(skill, delta);
             if (changed)
             {
                 depletionWarning = evaluateDepletionLocked(skill, delta);
+                milestones.onXpGain(skill, previous, newXp, previousBalance,
+                    storedXp.getOrDefault(skill, 0L), config);
             }
         }
 
@@ -431,6 +469,7 @@ public class GokIrlBankedXpPlugin extends Plugin
      */
     private void beginLoginSync()
     {
+        milestones.clear();
         loginSyncTicksRemaining = LOGIN_SYNC_TICKS;
         synchronized (dataLock)
         {
@@ -454,7 +493,19 @@ public class GokIrlBankedXpPlugin extends Plugin
         }
 
         boolean needsRefresh = false;
-        if ("lowXpThreshold".equals(event.getKey()))
+        if ("showOverlay".equals(event.getKey())
+            || "xpMilestoneEnabled".equals(event.getKey())
+            || "levelMilestoneEnabled".equals(event.getKey())
+            || "milestoneXpThreshold".equals(event.getKey())
+            || "milestoneLevelsRemaining".equals(event.getKey())
+            || "milestonePopupSeconds".equals(event.getKey()))
+        {
+            // Old reminders describe the old settings; a new setting never
+            // fabricates an XP gain or disables the tracking event subscribers.
+            milestones.clear();
+            needsRefresh = true;
+        }
+        else if ("lowXpThreshold".equals(event.getKey()))
         {
             needsRefresh = true;
         }
@@ -689,6 +740,7 @@ public class GokIrlBankedXpPlugin extends Plugin
         synchronized (dataLock)
         {
             Map<Skill, Long> loaded = bankedXpStore.load();
+            milestones.clear();
             storedXp.clear();
             storedXp.putAll(loaded);
             // Balances may have changed under the warnings' feet, so both re-arm.

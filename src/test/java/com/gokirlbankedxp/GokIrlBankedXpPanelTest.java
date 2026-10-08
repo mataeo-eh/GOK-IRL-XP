@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 
 import com.gokirlbankedxp.service.TestMultipliers;
 import java.awt.Component;
@@ -14,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.JComboBox;
+import javax.swing.JCheckBox;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import net.runelite.api.Skill;
@@ -21,6 +24,30 @@ import org.junit.jupiter.api.Test;
 
 class GokIrlBankedXpPanelTest
 {
+    @Test
+    void sidebarCheckboxEditsVisibilityAndFollowsExternalSettings() throws Exception
+    {
+        GokIrlBankedXpPlugin plugin = mock(GokIrlBankedXpPlugin.class);
+        when(plugin.getTrackableSkills()).thenReturn(new Skill[]{Skill.MINING});
+        when(plugin.isOverlayShown()).thenReturn(true);
+        AtomicReference<GokIrlBankedXpPanel> reference = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> reference.set(new GokIrlBankedXpPanel(
+            plugin, new TestMultipliers().multiplierManager)));
+        java.lang.reflect.Field field = GokIrlBankedXpPanel.class.getDeclaredField("showOverlay");
+        field.setAccessible(true);
+        JCheckBox checkbox = (JCheckBox) field.get(reference.get());
+        SwingUtilities.invokeAndWait(() -> {
+            assertTrue(checkbox.isSelected());
+            checkbox.doClick();
+            assertFalse(checkbox.isSelected());
+        });
+        verify(plugin).setOverlayShown(false);
+        // An external configuration/profile refresh updates the UI without writing back.
+        reference.get().updateSnapshot(GokIrlBankedXpPlugin.BankedXpSnapshot.empty());
+        SwingUtilities.invokeAndWait(() -> assertTrue(checkbox.isSelected()));
+        verify(plugin, times(1)).setOverlayShown(false);
+        verify(plugin, times(0)).setOverlayShown(true);
+    }
     @Test
     void parsesPositiveWholeNumberXp()
     {

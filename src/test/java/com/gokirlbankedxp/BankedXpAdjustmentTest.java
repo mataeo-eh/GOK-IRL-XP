@@ -44,6 +44,97 @@ import org.junit.jupiter.api.Test;
 class BankedXpAdjustmentTest
 {
     @Test
+    void hiddenOverlayStillConsumesAndPersistsXpAndOnlyCrossingsPopUp()
+    {
+        Fixture fixture = new Fixture();
+        when(fixture.config.showOverlay()).thenReturn(false);
+        when(fixture.config.xpMilestoneEnabled()).thenReturn(true);
+        when(fixture.config.milestoneXpThreshold()).thenReturn(500);
+        fixture.plugin.addManualXp(Skill.MINING, 1000);
+        fixture.gainXp(Skill.MINING, 500, 1);
+        assertFalse(fixture.plugin.isOverlayShown());
+        assertEquals(500L, fixture.plugin.getBankedXp(Skill.MINING));
+        assertEquals("MINING:500", fixture.storedXp());
+        assertFalse(fixture.plugin.getMilestoneLines().isEmpty());
+        fixture.plugin.onGameStateChanged(gameState(GameState.HOPPING));
+        assertTrue(fixture.plugin.getMilestoneLines().isEmpty());
+        // A fresh session baseline is not a gain and cannot re-show the popup.
+        fixture.logInOnFreshClient(Map.of(Skill.MINING, 1_000_500));
+        assertTrue(fixture.plugin.getMilestoneLines().isEmpty());
+        fixture.gainXp(Skill.MINING, 100, 1);
+        assertEquals(400L, fixture.plugin.getBankedXp(Skill.MINING));
+        assertTrue(fixture.plugin.getMilestoneLines().isEmpty());
+    }
+
+    @Test
+    void loginSyncCannotTriggerLevelOrXpMilestones()
+    {
+        Fixture fixture = new Fixture();
+        when(fixture.config.levelMilestoneEnabled()).thenReturn(true);
+        when(fixture.config.xpMilestoneEnabled()).thenReturn(true);
+        when(fixture.config.milestoneXpThreshold()).thenReturn(500);
+        when(fixture.config.milestoneLevelsRemaining()).thenReturn(98);
+        fixture.plugin.addManualXp(Skill.MINING, 1000);
+        fixture.logInOnFreshClient(Map.of(Skill.MINING, 1_000_000));
+        assertEquals(1000L, fixture.plugin.getBankedXp(Skill.MINING));
+        assertTrue(fixture.plugin.getMilestoneLines().isEmpty());
+    }
+
+    @Test
+    void dismissingMilestonesDoesNotStopTrackingOrChangeVisibility()
+    {
+        Fixture fixture = new Fixture();
+        when(fixture.config.xpMilestoneEnabled()).thenReturn(true);
+        when(fixture.config.milestoneXpThreshold()).thenReturn(500);
+        GokIrlBankedXpOverlay overlay = mock(GokIrlBankedXpOverlay.class);
+        fixture.set("overlay", overlay);
+        fixture.plugin.addManualXp(Skill.MINING, 1000);
+        fixture.gainXp(Skill.MINING, 500, 1);
+        net.runelite.client.ui.overlay.OverlayMenuEntry entry = new net.runelite.client.ui.overlay.OverlayMenuEntry(
+            net.runelite.api.MenuAction.RUNELITE_OVERLAY, GokIrlBankedXpOverlay.DISMISS_MILESTONES, "IRL XP");
+        fixture.plugin.onOverlayMenuClicked(new net.runelite.client.events.OverlayMenuClicked(
+            entry, mock(GokIrlBankedXpOverlay.class)));
+        assertFalse(fixture.plugin.getMilestoneLines().isEmpty());
+        fixture.plugin.onOverlayMenuClicked(new net.runelite.client.events.OverlayMenuClicked(entry, overlay));
+        assertTrue(fixture.plugin.getMilestoneLines().isEmpty());
+        fixture.gainXp(Skill.MINING, 100, 1);
+        assertEquals(400L, fixture.plugin.getBankedXp(Skill.MINING));
+        assertFalse(fixture.plugin.isOverlayShown());
+        assertTrue(fixture.plugin.getMilestoneLines().isEmpty());
+    }
+
+    @Test
+    void sidebarVisibilitySettingSurvivesPluginRecreation()
+    {
+        Fixture fixture = new Fixture();
+        ConfigManager manager = inMemoryConfigManager(fixture.stored);
+        fixture.set("configManager", manager);
+        fixture.plugin.setOverlayShown(false);
+        assertEquals("false", fixture.stored.get(GokIrlBankedXpConfig.GROUP + ".showOverlay"));
+        // Recreate the plugin against the same stored config, as after a restart.
+        GokIrlBankedXpPlugin restarted = new GokIrlBankedXpPlugin();
+        GokIrlBankedXpConfig restoredConfig = mock(GokIrlBankedXpConfig.class);
+        when(restoredConfig.showOverlay()).thenAnswer(invocation -> Boolean.parseBoolean(
+            manager.getConfiguration(GokIrlBankedXpConfig.GROUP, "showOverlay")));
+        try
+        {
+            Field configField = GokIrlBankedXpPlugin.class.getDeclaredField("config");
+            configField.setAccessible(true);
+            configField.set(restarted, restoredConfig);
+            Field managerField = GokIrlBankedXpPlugin.class.getDeclaredField("configManager");
+            managerField.setAccessible(true);
+            managerField.set(restarted, manager);
+        }
+        catch (ReflectiveOperationException ex)
+        {
+            throw new IllegalStateException(ex);
+        }
+        assertFalse(restarted.isOverlayShown());
+        restarted.setOverlayShown(true);
+        assertTrue(restarted.isOverlayShown());
+        assertTrue(restarted.getMilestoneLines().isEmpty());
+    }
+    @Test
     void removingXpReducesTheBalance()
     {
         Fixture fixture = new Fixture();
@@ -522,6 +613,12 @@ class BankedXpAdjustmentTest
     private static ConfigManager inMemoryConfigManager(Map<String, String> backing)
     {
         ConfigManager configManager = mock(ConfigManager.class);
+        // ConfigManager has separate String and generic/Object overloads.
+        // Boolean sidebar settings call the latter, unlike serialized XP.
+        doAnswer(invocation -> backing.put(
+            invocation.getArgument(0) + "." + invocation.getArgument(1),
+            String.valueOf((Object) invocation.getArgument(2))))
+            .when(configManager).setConfiguration(anyString(), anyString(), (Object) any());
         doAnswer(invocation -> backing.put(
             invocation.getArgument(0) + "." + invocation.getArgument(1),
             String.valueOf((Object) invocation.getArgument(2))))

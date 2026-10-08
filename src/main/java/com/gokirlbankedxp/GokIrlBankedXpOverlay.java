@@ -7,6 +7,8 @@ import java.awt.Graphics2D;
 import java.util.List;
 import java.util.Locale;
 import javax.inject.Inject;
+import net.runelite.api.MenuAction;
+import net.runelite.client.ui.overlay.OverlayMenuEntry;
 import net.runelite.client.ui.overlay.OverlayLayer;
 import net.runelite.client.ui.overlay.OverlayPanel;
 import net.runelite.client.ui.overlay.OverlayPosition;
@@ -28,6 +30,7 @@ import net.runelite.client.util.QuantityFormatter;
  */
 class GokIrlBankedXpOverlay extends OverlayPanel
 {
+    static final String DISMISS_MILESTONES = "Dismiss milestones";
     /**
      * Default width before the user resizes anything. Wider than RuneLite's
      * 129px standard because skill rows pair a name with a formatted XP total.
@@ -45,6 +48,8 @@ class GokIrlBankedXpOverlay extends OverlayPanel
     {
         this.plugin = plugin;
         this.timerManager = timerManager;
+        getMenuEntries().add(new OverlayMenuEntry(MenuAction.RUNELITE_OVERLAY,
+            DISMISS_MILESTONES, "IRL XP"));
         setPosition(OverlayPosition.TOP_LEFT);
         setLayer(OverlayLayer.ABOVE_SCENE);
         panelComponent.setPreferredSize(new Dimension(DEFAULT_WIDTH, 0));
@@ -58,6 +63,25 @@ class GokIrlBankedXpOverlay extends OverlayPanel
     @Override
     public Dimension render(Graphics2D graphics)
     {
+        // Visibility is purely presentational. The registered plugin still
+        // consumes every XP event and advances timers while this returns null.
+        panelComponent.getChildren().clear();
+        List<String> milestoneLines = plugin.getMilestoneLines();
+        if (!milestoneLines.isEmpty())
+        {
+            panelComponent.getChildren().add(TitleComponent.builder()
+                .text("IRL XP milestone").color(Color.ORANGE).build());
+            for (String line : milestoneLines)
+            {
+                panelComponent.getChildren().add(LineComponent.builder().left(line).build());
+            }
+            panelComponent.getChildren().add(LineComponent.builder()
+                .left("Right-click: Dismiss milestones").leftColor(Color.GRAY).build());
+        }
+        if (!plugin.isOverlayShown())
+        {
+            return milestoneLines.isEmpty() ? null : super.render(graphics);
+        }
         GokIrlBankedXpPlugin.BankedXpSnapshot snapshot = plugin.getCurrentSnapshot();
         if (snapshot != null && snapshot.hasData())
         {

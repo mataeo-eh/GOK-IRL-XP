@@ -86,8 +86,10 @@ Every tab is a button under the **IRL XP** title in the sidebar, and the line un
 | Red screen flash as a skill runs out | RuneLite Configuration (wrench) → **IRL XP** → *Almost-out warning (red screen flash)* |
 | Turn all level multipliers on/off | RuneLite Configuration (wrench) → **IRL XP** → *Level multipliers* |
 | Overlay size and position | Drag it in-game with RuneLite's overlay drag key (**ALT** by default) |
+| Show/hide the regular overlay | Sidebar → **BANKED XP** → **Show on-screen overlay**, or IRL XP configuration |
+| Milestone popups | RuneLite Configuration (wrench) → **IRL XP** → *Overlay and milestone popups* |
 
-The RuneLite settings panel groups the plugin's options into three named sections, and each section says in plain language what the whole group controls. The **BANKED XP** tab carries a permanent note naming that route, because a plugin cannot open RuneLite's own settings panel for you.
+The RuneLite settings panel groups the plugin's options into four named sections, and each section says in plain language what the whole group controls. The **BANKED XP** tab carries a permanent note naming that route, because a plugin cannot open RuneLite's own settings panel for you.
 
 ### Creating Actions
 1. Click **New Action**.
@@ -165,6 +167,12 @@ It applies to every deposit: timers, logged completed work, and the manual **Ban
 - To switch the whole feature off without losing your thresholds, untick **Use level multipliers** in RuneLite's settings. The tab says so in red while it is off.
 
 ### Overlay
+- Uncheck **Show on-screen overlay** in the **BANKED XP** sidebar tab (or IRL XP configuration) to hide the regular banked XP and timer display. XP depletion, debt, saving, timers and existing warnings continue. The checkbox is saved with your RuneLite configuration profile.
+- Optional **milestone popups** work even with the regular overlay hidden. Both triggers start disabled; enable either or both under **Overlay and milestone popups** in IRL XP configuration:
+  - **Popup at XP threshold:** a skill's balance crosses from above to at or below your chosen XP amount during training. Default amount: 500; choose 0 for depletion. It can fire again after a top-up takes the balance above that amount. Deposits, manual removals and login synchronization do not create milestone popups.
+  - **Popup after a level-up:** after a genuine level gain, show the level reached, remaining XP and further real levels covered by the bank. Choose how many or fewer further levels should trigger it (default: 2, so 2, 1 and 0 qualify). Counts levels up to 99, ignores boosts and virtual levels, and only triggers if the skill had positive banked XP before the gain.
+  - **Dismissal:** right-click the popup and choose **Dismiss milestones**. Default timeout: 30 seconds; set **Popup duration (seconds)** to 0 to keep it until dismissed. Dismissal leaves the regular visibility checkbox unchanged. Simultaneous skills are shown together. Popup figures describe the moment of the milestone; the sidebar continues showing live balances.
+  - Reminders appear when XP is earned; they do not wait for the game's level-up dialogue to close. Login, world hopping, configuration profile changes and changed popup settings clear old reminders. They are not replayed after restarting.
 - Shows total banked XP plus per-skill amounts (orange when under your low threshold, red when the skill is in debt). The total is the net figure: banked XP minus anything owed.
 - Lists active timers with elapsed time and XP rates so you can see what’s running without opening the sidebar.
 - **Resizing:** hold RuneLite’s overlay drag key — **ALT** by default — and drag any edge or corner of the overlay to the size you want. The font scales with it, so it stays readable when small and does not look sparse when large.
@@ -189,7 +197,15 @@ The plugin can flash the screen red just before a skill’s banked XP runs out, 
 - Actions, units, timers and level multipliers still live only in RuneLite’s config.
 
 ## Configuration
-Open RuneLite's Configuration panel (the wrench) and pick **IRL XP**. The options are grouped into three named sections.
+For Plugin Hub submissions and automatic release version increments, see [the release workflow](docs/RELEASING.md).
+
+Open RuneLite's Configuration panel (the wrench) and pick **IRL XP**. The options are grouped into four named sections.
+
+**Overlay and milestone popups**
+- **Show on-screen overlay:** the regular banked XP and timer display, on by default. Also available as a sidebar checkbox. Hiding it keeps tracking active.
+- **Popup at XP threshold** and **Popup at this much XP:** optional reminder on a downward threshold crossing.
+- **Popup after a level-up** and **Popup with this many levels left:** optional reminder when a level gain leaves the chosen number or fewer further levels banked.
+- **Popup duration (seconds):** 30 by default; 0 means dismiss manually. See **Overlay** above for the trigger and dismissal details.
 
 **Low banked XP warning (chat)** — the quiet warning.
 - **Send the chat warning:** Turn the chat message off entirely. It is sent once per skill and only becomes possible again after that skill is topped up.

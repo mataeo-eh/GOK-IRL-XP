@@ -23,6 +23,7 @@ import javax.swing.BorderFactory;
 import javax.swing.DefaultComboBoxModel;
 import javax.swing.DefaultListModel;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JList;
@@ -82,6 +83,7 @@ class GokIrlBankedXpPanel extends JPanel
 
     private final DefaultListModel<String> skillListModel = new DefaultListModel<>();
     private final JLabel totalXpLabel = new JLabel("0 XP");
+    private final JCheckBox showOverlay = new JCheckBox("Show on-screen overlay");
 
     @Inject
     GokIrlBankedXpPanel(GokIrlBankedXpPlugin plugin, XpMultiplierManager multiplierManager)
@@ -214,7 +216,16 @@ class GokIrlBankedXpPanel extends JPanel
         balanceCard.add(scrollPane, BorderLayout.CENTER);
         add(balanceCard, BorderLayout.CENTER);
 
-        add(buildSettingsPointer(), BorderLayout.SOUTH);
+        JPanel displaySettings = new JPanel(new BorderLayout(0, 8));
+        displaySettings.setOpaque(false);
+        showOverlay.setOpaque(false);
+        showOverlay.setForeground(IrlXpUi.TEXT);
+        showOverlay.setSelected(plugin.isOverlayShown());
+        showOverlay.setToolTipText("Hide banked XP and timers on screen while all tracking continues. Configure milestone popups in IRL XP settings.");
+        showOverlay.addActionListener(e -> plugin.setOverlayShown(showOverlay.isSelected()));
+        displaySettings.add(showOverlay, BorderLayout.NORTH);
+        displaySettings.add(buildSettingsPointer(), BorderLayout.CENTER);
+        add(displaySettings, BorderLayout.SOUTH);
 
         showMode(ADD_CARD);
         refreshDepositPreview();
@@ -233,11 +244,11 @@ class GokIrlBankedXpPanel extends JPanel
     private JPanel buildSettingsPointer()
     {
         JPanel card = IrlXpUi.card(new BorderLayout(0, 4));
-        card.add(IrlXpUi.mutedLabel("Warnings & screen flash"), BorderLayout.NORTH);
+        card.add(IrlXpUi.mutedLabel("Milestones & warnings"), BorderLayout.NORTH);
         card.add(IrlXpUi.wrappingNote(
-            "Set how and when you are warned that a skill is running out in RuneLite's own settings: "
-                + "Configuration (the wrench) > IRL XP. Look for \"Low banked XP warning (chat)\" and "
-                + "\"Almost-out warning (red screen flash)\".", 4), BorderLayout.CENTER);
+            "Configuration (the wrench) > IRL XP: choose \"Overlay and milestone popups\" "
+                + "for occasional XP and level-up reminders, even with the overlay hidden. "
+                + "Chat and screen-flash warnings have their own sections below it.", 4), BorderLayout.CENTER);
         return card;
     }
 
@@ -405,6 +416,9 @@ class GokIrlBankedXpPanel extends JPanel
     void updateSnapshot(GokIrlBankedXpPlugin.BankedXpSnapshot snapshot)
     {
         SwingUtilities.invokeLater(() -> {
+            // ConfigChanged and profile switches refresh the same snapshot path.
+            // setSelected does not fire our ActionListener, so this cannot write back.
+            showOverlay.setSelected(plugin.isOverlayShown());
             skillListModel.clear();
             refreshRemovableSkills(snapshot);
             // A snapshot follows every XP change, and an XP change can be the

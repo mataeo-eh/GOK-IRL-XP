@@ -35,6 +35,65 @@ public interface GokIrlBankedXpConfig extends Config
     String LOW_XP_SECTION = "lowXpSection";
     String ALMOST_OUT_SECTION = "almostOutSection";
     String MULTIPLIER_SECTION = "multiplierSection";
+    String OVERLAY_SECTION = "overlaySection";
+
+    @ConfigSection(
+        name = "Overlay and milestone popups",
+        description = "Hide the regular display while tracking continues, and choose occasional milestone reminders.",
+        position = -10
+    )
+    String overlaySection = OVERLAY_SECTION;
+
+    @ConfigItem(keyName = "showOverlay", name = "Show on-screen overlay",
+        description = "Show banked XP and active timers. Turning this off keeps all XP tracking and timers running.",
+        section = OVERLAY_SECTION, position = -9)
+    default boolean showOverlay()
+    {
+        return true;
+    }
+
+    @ConfigItem(keyName = "xpMilestoneEnabled", name = "Popup at XP threshold",
+        description = "Show a reminder when training takes a skill from above to at or below the XP amount below. Works with the regular overlay hidden.",
+        section = OVERLAY_SECTION, position = -8)
+    default boolean xpMilestoneEnabled()
+    {
+        return false;
+    }
+
+    @Range(min = 0)
+    @ConfigItem(keyName = "milestoneXpThreshold", name = "Popup at this much XP",
+        description = "Remaining banked XP per skill. Zero means the bank has run out. Crossing again after a top-up can show another popup.",
+        section = OVERLAY_SECTION, position = -7)
+    default int milestoneXpThreshold()
+    {
+        return 500;
+    }
+
+    @ConfigItem(keyName = "levelMilestoneEnabled", name = "Popup after a level-up",
+        description = "After earning a real level, show how many further levels your remaining banked XP covers. Only skills with XP banked before the gain trigger this.",
+        section = OVERLAY_SECTION, position = -6)
+    default boolean levelMilestoneEnabled()
+    {
+        return false;
+    }
+
+    @Range(min = 0, max = 98)
+    @ConfigItem(keyName = "milestoneLevelsRemaining", name = "Popup with this many levels left",
+        description = "Show the level-up reminder when this many or fewer further levels are banked. For example 2 includes 2, 1 and 0. Counts real levels up to 99.",
+        section = OVERLAY_SECTION, position = -5)
+    default int milestoneLevelsRemaining()
+    {
+        return 2;
+    }
+
+    @Range(min = 0, max = 300)
+    @ConfigItem(keyName = "milestonePopupSeconds", name = "Popup duration (seconds)",
+        description = "Automatically hide milestone reminders after this long. Zero keeps them until dismissed. Right-click the popup and choose Dismiss milestones at any time.",
+        section = OVERLAY_SECTION, position = -4)
+    default int milestonePopupSeconds()
+    {
+        return 30;
+    }
 
     /**
      * The out-of-the-box depletion warning: a red screen flash, plus a chat line.
