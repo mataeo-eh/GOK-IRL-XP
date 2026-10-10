@@ -28,7 +28,8 @@ existing=$(gh pr list --repo runelite/plugin-hub --author "$owner" --head gok-ir
     --state open --json url --jq '.[].url')
 if [[ -n "$existing" ]]; then
     echo "An update PR is already open: $existing"
-    echo 'Update its manifest commit for review fixes; keep the submitted version.'
+    echo 'For review fixes: bump the version (./gradlew bumpPluginVersion), push,'
+    echo 'update its manifest commit, and retitle the PR. See docs/RELEASING.md.'
     exit 0
 fi
 # The fork must already exist and belong to the authenticated user. Inspect the

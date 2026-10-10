@@ -1,7 +1,9 @@
 # Releasing IRL XP to the RuneLite Plugin Hub
 
 The user-visible version lives in `runelite-plugin.properties`. Gradle reads that
-same value for local JAR names. Ordinary builds do not change the version.
+same value for local JAR names. Ordinary builds do not change the version, but
+every change that is pushed for the Plugin Hub does: no two submitted source
+commits share a version number.
 
 ## Submit a release
 
@@ -38,9 +40,12 @@ source commit, and opens the upstream PR. It never merges the upstream PR.
 - Minor increments reset patch to zero; major increments reset minor and patch.
 - Successful PR creation records an annotated `plugin-hub-vVERSION` tag in the
   source repository. Tags mark submissions, not approvals or live deployment.
-- An open PR is reported and reused without incrementing or opening a duplicate.
-  To change its source during review, commit and push the fixes, update that PR's
-  manifest `commit` to the new source hash, and keep the submitted version.
+- An open PR is reported and reused without opening a duplicate; the command
+  stops there. To change its source during review, increment the version
+  yourself with `./gradlew bumpPluginVersion -PreleaseBump=patch` (or `minor` /
+  `major`), commit that with the change, push, update that PR's manifest
+  `commit` to the new source hash, and retitle the PR to the new version. Every
+  source commit the manifest points at has its own version number.
 - A failed submission before PR creation leaves its prepared version available
   for a retry. If PR creation succeeded but tagging failed, create/push the
   missing submission tag at the manifest's exact source commit before the next
