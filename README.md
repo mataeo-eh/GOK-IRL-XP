@@ -30,7 +30,7 @@ Turn your real-life effort into RuneScape progress. Bank XP for any skill by log
 Once `~/.runelite/credentials.properties` exists, close every other RuneLite window and run:
 
 ```bash
-cd "$HOME/Desktop/My_programming/git/GOK-IRL-XP"
+cd "GOK-IRL-XP"
 ./gradlew run
 ```
 
