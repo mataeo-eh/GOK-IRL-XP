@@ -34,6 +34,7 @@ import javax.swing.JList;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
+import javax.swing.ScrollPaneConstants;
 import javax.swing.ListSelectionModel;
 import javax.swing.SwingUtilities;
 import javax.swing.DefaultListCellRenderer;
@@ -43,6 +44,7 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import net.runelite.api.Skill;
 import net.runelite.client.game.SkillIconManager;
+import net.runelite.client.ui.DynamicGridLayout;
 import net.runelite.client.util.QuantityFormatter;
 
 /**
@@ -60,8 +62,8 @@ import net.runelite.client.util.QuantityFormatter;
 class GokIrlBankedXpPanel extends JPanel
 {
     private static final Insets FIELD_INSETS = new Insets(4, 0, 4, 8);
-    /** The space left under each section of the tab. */
-    private static final Insets SECTION_GAP = new Insets(0, 0, 10, 0);
+    /** The vertical space, in pixels, between the sections of the tab. */
+    private static final int SECTION_GAP = 10;
     /** The most rows the balance list shows before it scrolls on its own. */
     private static final int MAX_BALANCE_ROWS = 10;
     private static final int OVERLAY_MARK_SIZE = 12;
@@ -131,7 +133,17 @@ class GokIrlBankedXpPanel extends JPanel
 
         // One column of sections, each as tall as its contents, so a section
         // that is folded away gives its space back to the ones below it.
-        setLayout(new GridBagLayout());
+        //
+        // DynamicGridLayout is RuneLite's own sidebar layout (PluginPanel uses
+        // it): a single column whose rows each take their own preferred height.
+        // It is used instead of GridBagLayout on purpose. The wrapped notes in
+        // these sections only learn their real height once they have a width,
+        // so for a moment after a section opens the column is a few pixels
+        // shorter than its contents want. GridBagLayout answers any shortfall,
+        // however small, by dropping every row to its minimum size, which
+        // crushed the skill grid and the balance list. This layout shares a
+        // shortfall out in proportion, so those few pixels are not noticeable.
+        setLayout(new DynamicGridLayout(0, 1, 0, SECTION_GAP));
         setBackground(IrlXpUi.BACKGROUND);
         setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
 
@@ -239,11 +251,17 @@ class GokIrlBankedXpPanel extends JPanel
                 JLabel label = (JLabel) super.getListCellRendererComponent(
                     list, value, index, isSelected, cellHasFocus);
                 label.setBorder(BorderFactory.createEmptyBorder(5, 9, 5, 9));
+                label.setToolTipText(String.valueOf(value));
                 return label;
             }
         });
         JScrollPane scrollPane = new JScrollPane(skillList);
         IrlXpUi.styleList(skillList, scrollPane);
+        // The list is exactly as tall as its rows, so a horizontal scroll bar
+        // would cover the only row of a one-skill balance. Rows are kept short
+        // instead, and a row that is still too wide for the sidebar is clipped
+        // on screen and shown in full by its tooltip.
+        scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
         // Open by default, and the total is the summary line, so the one figure
         // most players want is on screen whether the list is open or not.
         balanceSection = new CollapsibleSection(
@@ -267,29 +285,11 @@ class GokIrlBankedXpPanel extends JPanel
             plugin.getTrackableSkills(), skillIconManager, plugin::setSkillTracked);
         trackingSection = buildTrackedSkillsSection();
 
-        GridBagConstraints stack = new GridBagConstraints();
-        stack.gridx = 0;
-        stack.weightx = 1.0;
-        stack.fill = GridBagConstraints.HORIZONTAL;
-        stack.insets = SECTION_GAP;
-        stack.gridy = 0;
-        add(bankSection, stack);
-        stack.gridy = 1;
-        add(balanceSection, stack);
-        stack.gridy = 2;
-        add(overlayToggle, stack);
-        stack.gridy = 3;
-        add(trackingSection, stack);
-        stack.gridy = 4;
-        stack.insets = new Insets(0, 0, 0, 0);
-        add(buildSettingsPointer(), stack);
-        // GridBagLayout centres its rows when given more height than they need.
-        // An empty row that takes all the spare height keeps them at the top.
-        stack.gridy = 5;
-        stack.weighty = 1.0;
-        JPanel spare = new JPanel();
-        spare.setOpaque(false);
-        add(spare, stack);
+        add(bankSection);
+        add(balanceSection);
+        add(overlayToggle);
+        add(trackingSection);
+        add(buildSettingsPointer());
 
         showMode(ADD_CARD);
         // Guice constructs this panel while injecting the plugin's fields, so
@@ -614,15 +614,15 @@ class GokIrlBankedXpPanel extends JPanel
                 String marker = "";
                 if (entry.isInDebt())
                 {
-                    marker = "   OWED";
+                    marker = " OWED";
                 }
                 else if (entry.isBelowThreshold())
                 {
-                    marker = "   LOW";
+                    marker = " LOW";
                 }
                 String line = String.format(
                     Locale.US,
-                    "%s   •   %s XP%s",
+                    "%s • %s XP%s",
                     entry.getDisplayName(),
                     QuantityFormatter.formatNumber(entry.getRemainingXp()),
                     marker
