@@ -1,13 +1,11 @@
 package com.gokirlbankedxp.ui;
 
-import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.GridLayout;
-import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -71,8 +69,6 @@ public final class SkillTrackingGrid extends JPanel
     private static final Color TILE_OFF_HIGHLIGHT = new Color(0x34363A);
     private static final Color TILE_EDGE = new Color(0x15130F);
     private static final Color TILE_HOVER = new Color(255, 255, 255, 28);
-    private static final Color TICK = new Color(0x3FD45A);
-    private static final Color CROSS = new Color(0xE0443E);
 
     private final Map<Skill, SkillTile> tiles = new EnumMap<>(Skill.class);
 
@@ -221,26 +217,12 @@ public final class SkillTrackingGrid extends JPanel
                 int iconY = (height - image.getHeight()) / 2;
                 g.drawImage(image, iconX, iconY, null);
 
-                // State on the right, where the game puts the level. Drawn as
-                // strokes rather than text so it does not depend on the client
-                // font having tick and cross glyphs.
-                g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                g.setStroke(new BasicStroke(2.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                // State on the right, where the game puts the level: the
+                // plugin's shared green tick or red cross.
                 int markSize = 10;
                 int markX = width - markSize - 6;
                 int markY = (height - markSize) / 2;
-                if (tracked)
-                {
-                    g.setColor(TICK);
-                    g.drawLine(markX, markY + 5, markX + 4, markY + markSize - 1);
-                    g.drawLine(markX + 4, markY + markSize - 1, markX + markSize, markY);
-                }
-                else
-                {
-                    g.setColor(CROSS);
-                    g.drawLine(markX + 1, markY + 1, markX + markSize - 1, markY + markSize - 1);
-                    g.drawLine(markX + markSize - 1, markY + 1, markX + 1, markY + markSize - 1);
-                }
+                StateMarkIcon.paintMark(g, markX, markY, markSize, tracked);
             }
             finally
             {

@@ -1,8 +1,10 @@
 package com.gokirlbankedxp;
 
 import com.gokirlbankedxp.service.XpMultiplierManager;
+import com.gokirlbankedxp.ui.CollapsibleSection;
 import com.gokirlbankedxp.ui.IrlXpUi;
 import com.gokirlbankedxp.ui.SkillTrackingGrid;
+import com.gokirlbankedxp.ui.StateMarkIcon;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Component;
@@ -26,7 +28,6 @@ import javax.swing.BorderFactory;
 import javax.swing.DefaultComboBoxModel;
 import javax.swing.DefaultListModel;
 import javax.swing.JButton;
-import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JList;
@@ -59,6 +60,11 @@ import net.runelite.client.util.QuantityFormatter;
 class GokIrlBankedXpPanel extends JPanel
 {
     private static final Insets FIELD_INSETS = new Insets(4, 0, 4, 8);
+    /** The space left under each section of the tab. */
+    private static final Insets SECTION_GAP = new Insets(0, 0, 10, 0);
+    /** The most rows the balance list shows before it scrolls on its own. */
+    private static final int MAX_BALANCE_ROWS = 10;
+    private static final int OVERLAY_MARK_SIZE = 12;
 
     private static final String ADD_CARD = "ADD";
     private static final String REMOVE_CARD = "REMOVE";
@@ -86,14 +92,27 @@ class GokIrlBankedXpPanel extends JPanel
     private final JButton removeModeButton = new JButton("REMOVE XP");
 
     private final DefaultListModel<String> skillListModel = new DefaultListModel<>();
-    private final JLabel totalXpLabel = new JLabel("0 XP");
-    private final JCheckBox showOverlay = new JCheckBox("Show on-screen overlay");
+    private final JList<String> skillList = new JList<>(skillListModel);
+    /** Holds the balance list; its summary line is the banked total. */
+    private final CollapsibleSection balanceSection;
+
+    /**
+     * Shows or hides the on-screen overlay, and says which it will do.
+     *
+     * <p>A button rather than a checkbox: the look-and-feel's dark grey tick on
+     * a dark sidebar was nearly impossible to read. The icon shows the current
+     * state (green tick while the overlay is showing, red cross while it is
+     * hidden) and the words name what a click will do ("Hide…" or "Show…").</p>
+     */
+    private final JButton overlayToggle = new JButton();
+    /** The overlay state the toggle currently displays; see {@link #renderOverlayToggle}. */
+    private boolean overlayShown;
 
     /** The in-game-style grid of skill switches, hidden until its section is opened. */
     private final SkillTrackingGrid trackingGrid;
     private final JPanel trackingBody = new JPanel(new BorderLayout(0, 8));
-    private final JLabel trackingSummary = IrlXpUi.mutedLabel(" ");
-    private final JButton trackingToggle = new JButton("Show");
+    /** Holds the grid; its summary line says how many skills are switched on. */
+    private final CollapsibleSection trackingSection;
     /**
      * The untracked set the deposit drop-down was last built from, so it is only
      * rebuilt when that set actually changes rather than on every XP drop.
@@ -110,11 +129,16 @@ class GokIrlBankedXpPanel extends JPanel
         this.plugin = plugin;
         this.multiplierManager = multiplierManager;
 
-        setLayout(new BorderLayout(0, 10));
+        // One column of sections, each as tall as its contents, so a section
+        // that is folded away gives its space back to the ones below it.
+        setLayout(new GridBagLayout());
         setBackground(IrlXpUi.BACKGROUND);
         setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
 
-        JPanel inputPanel = IrlXpUi.card(new BorderLayout(0, 10));
+        // The section header names the form, so the two forms inside it carry
+        // only a one-line hint rather than a second heading of their own.
+        JPanel inputPanel = new JPanel(new BorderLayout(0, 10));
+        inputPanel.setOpaque(false);
         inputPanel.add(buildModeToggle(), BorderLayout.NORTH);
 
         JPanel addForm = new JPanel(new GridBagLayout());
@@ -128,19 +152,14 @@ class GokIrlBankedXpPanel extends JPanel
         gc.weightx = 1.0;
         gc.gridwidth = GridBagConstraints.REMAINDER;
 
-        JLabel formTitle = IrlXpUi.sectionTitle("Bank a chunk");
-        addForm.add(formTitle, gc);
+        addForm.add(IrlXpUi.mutedLabel("Add XP earned offline."), gc);
 
         gc.gridy = 1;
-        JLabel formHint = IrlXpUi.mutedLabel("Add XP earned offline.");
-        addForm.add(formHint, gc);
-
-        gc.gridy = 2;
         JLabel skillLabel = new JLabel("Skill");
         skillLabel.setForeground(IrlXpUi.MUTED_TEXT);
         addForm.add(skillLabel, gc);
 
-        gc.gridy = 3;
+        gc.gridy = 2;
         skillSelector = new JComboBox<>();
         skillSelector.setPreferredSize(new Dimension(1, 32));
         skillSelector.setRenderer(IrlXpUi.skillNameRenderer());
@@ -150,12 +169,12 @@ class GokIrlBankedXpPanel extends JPanel
         IrlXpUi.styleField(skillSelector);
         addForm.add(skillSelector, gc);
 
-        gc.gridy = 4;
+        gc.gridy = 3;
         JLabel xpLabel = new JLabel("XP amount");
         xpLabel.setForeground(IrlXpUi.MUTED_TEXT);
         addForm.add(xpLabel, gc);
 
-        gc.gridy = 5;
+        gc.gridy = 4;
         xpField = new JTextField();
         xpField.setToolTipText("Enter a positive whole-number XP amount");
         xpField.setEditable(true);
@@ -189,10 +208,10 @@ class GokIrlBankedXpPanel extends JPanel
         });
         addForm.add(xpField, gc);
 
-        gc.gridy = 6;
+        gc.gridy = 5;
         addForm.add(depositPreview, gc);
 
-        gc.gridy = 7;
+        gc.gridy = 6;
         gc.insets = new Insets(8, 0, 0, 0);
         JButton addButton = new JButton("BANK XP");
         IrlXpUi.stylePrimaryButton(addButton);
@@ -204,20 +223,13 @@ class GokIrlBankedXpPanel extends JPanel
         formCards.add(buildRemoveForm(), REMOVE_CARD);
         inputPanel.add(formCards, BorderLayout.CENTER);
 
-        add(inputPanel, BorderLayout.NORTH);
+        // Open by default: banking XP is what this tab is for.
+        CollapsibleSection bankSection = new CollapsibleSection(
+            "Bank XP", "Add XP to a skill, or take a mistaken deposit back out.", inputPanel, true);
+        bankSection.setSummary("Add or remove XP");
 
-        JPanel balanceCard = IrlXpUi.card(new BorderLayout(0, 8));
-        JPanel balanceHeader = new JPanel(new BorderLayout());
-        balanceHeader.setOpaque(false);
-        balanceHeader.add(IrlXpUi.sectionTitle("Current balance"), BorderLayout.WEST);
-        totalXpLabel.setForeground(IrlXpUi.ACCENT);
-        totalXpLabel.setFont(totalXpLabel.getFont().deriveFont(Font.BOLD, 15f));
-        balanceHeader.add(totalXpLabel, BorderLayout.EAST);
-        balanceCard.add(balanceHeader, BorderLayout.NORTH);
-
-        JList<String> skillList = new JList<>(skillListModel);
         skillList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        skillList.setVisibleRowCount(10);
+        skillList.setVisibleRowCount(1);
         skillList.setCellRenderer(new DefaultListCellRenderer()
         {
             @Override
@@ -232,26 +244,58 @@ class GokIrlBankedXpPanel extends JPanel
         });
         JScrollPane scrollPane = new JScrollPane(skillList);
         IrlXpUi.styleList(skillList, scrollPane);
-        balanceCard.add(scrollPane, BorderLayout.CENTER);
-        add(balanceCard, BorderLayout.CENTER);
+        // Open by default, and the total is the summary line, so the one figure
+        // most players want is on screen whether the list is open or not.
+        balanceSection = new CollapsibleSection(
+            "Balance", "See how much XP each skill has banked.", scrollPane, true);
+        balanceSection.setSummary("0 XP");
+        balanceSection.setSummaryColor(IrlXpUi.ACCENT);
 
-        JPanel displaySettings = new JPanel(new BorderLayout(0, 8));
-        displaySettings.setOpaque(false);
-        showOverlay.setOpaque(false);
-        showOverlay.setForeground(IrlXpUi.TEXT);
-        showOverlay.setSelected(plugin.isOverlayShown());
-        showOverlay.setToolTipText("Hide banked XP and timers on screen while all tracking continues. Configure milestone popups in IRL XP settings.");
-        showOverlay.addActionListener(e -> plugin.setOverlayShown(showOverlay.isSelected()));
-        displaySettings.add(showOverlay, BorderLayout.NORTH);
+        IrlXpUi.styleSecondaryButton(overlayToggle);
+        overlayToggle.setIconTextGap(8);
+        overlayToggle.setToolTipText("Hide banked XP and timers on screen while all tracking continues. Configure milestone popups in IRL XP settings.");
+        // The button flips itself straight away, as the checkbox it replaced
+        // did; the snapshot that follows the config change then confirms it.
+        overlayToggle.addActionListener(e -> {
+            boolean shown = !overlayShown;
+            plugin.setOverlayShown(shown);
+            renderOverlayToggle(shown);
+        });
+        renderOverlayToggle(true);
+
         trackingGrid = new SkillTrackingGrid(
             plugin.getTrackableSkills(), skillIconManager, plugin::setSkillTracked);
-        displaySettings.add(buildTrackedSkillsSection(), BorderLayout.CENTER);
-        displaySettings.add(buildSettingsPointer(), BorderLayout.SOUTH);
-        add(displaySettings, BorderLayout.SOUTH);
+        trackingSection = buildTrackedSkillsSection();
+
+        GridBagConstraints stack = new GridBagConstraints();
+        stack.gridx = 0;
+        stack.weightx = 1.0;
+        stack.fill = GridBagConstraints.HORIZONTAL;
+        stack.insets = SECTION_GAP;
+        stack.gridy = 0;
+        add(bankSection, stack);
+        stack.gridy = 1;
+        add(balanceSection, stack);
+        stack.gridy = 2;
+        add(overlayToggle, stack);
+        stack.gridy = 3;
+        add(trackingSection, stack);
+        stack.gridy = 4;
+        stack.insets = new Insets(0, 0, 0, 0);
+        add(buildSettingsPointer(), stack);
+        // GridBagLayout centres its rows when given more height than they need.
+        // An empty row that takes all the spare height keeps them at the top.
+        stack.gridy = 5;
+        stack.weighty = 1.0;
+        JPanel spare = new JPanel();
+        spare.setOpaque(false);
+        add(spare, stack);
 
         showMode(ADD_CARD);
-        refreshTrackedSkills();
-        refreshDepositPreview();
+        // Guice constructs this panel while injecting the plugin's fields, so
+        // its config and tracking services may not exist yet. startUp() loads
+        // those services and publishes a snapshot; updateSnapshot() then fills
+        // the controls on the EDT using the saved profile state.
     }
 
     /**
@@ -263,43 +307,37 @@ class GokIrlBankedXpPanel extends JPanel
      * while closed and says how many skills are on, so a player who has switched
      * some off is not left wondering why a skill has vanished from the list.</p>
      */
-    private JPanel buildTrackedSkillsSection()
+    private CollapsibleSection buildTrackedSkillsSection()
     {
-        JPanel card = IrlXpUi.card(new BorderLayout(0, 8));
-
-        JPanel header = new JPanel(new BorderLayout(8, 0));
-        header.setOpaque(false);
-        JPanel titles = new JPanel(new GridLayout(0, 1, 0, 1));
-        titles.setOpaque(false);
-        titles.add(IrlXpUi.sectionTitle("Tracked skills"));
-        titles.add(trackingSummary);
-        header.add(titles, BorderLayout.CENTER);
-
-        IrlXpUi.styleSecondaryButton(trackingToggle);
-        trackingToggle.setToolTipText("Choose which skills IRL XP tracks.");
-        trackingToggle.addActionListener(e -> setTrackingSectionOpen(!trackingBody.isVisible()));
-        header.add(trackingToggle, BorderLayout.EAST);
-        card.add(header, BorderLayout.NORTH);
-
         trackingBody.setOpaque(false);
         trackingBody.add(IrlXpUi.wrappingNote(
             "Click a skill to turn its tracking off or on. A skill that is off is hidden, "
                 + "gains and loses nothing, and keeps the XP it had for when you turn it back on.", 4),
             BorderLayout.NORTH);
         trackingBody.add(trackingGrid, BorderLayout.CENTER);
-        card.add(trackingBody, BorderLayout.CENTER);
 
-        setTrackingSectionOpen(false);
-        return card;
+        return new CollapsibleSection(
+            "Tracked skills", "Choose which skills IRL XP tracks.", trackingBody, false);
     }
 
-    private void setTrackingSectionOpen(boolean open)
+    /**
+     * Draws the overlay switch for the given overlay state.
+     *
+     * <p>Must run on the EDT. Icon and words deliberately point opposite ways:
+     * the icon is the state now, the words are the action a click performs.</p>
+     *
+     * @param shown whether the on-screen overlay is currently showing
+     */
+    private void renderOverlayToggle(boolean shown)
     {
-        trackingBody.setVisible(open);
-        trackingToggle.setText(open ? "Hide" : "Show");
-        // The section changes height, so the sidebar has to lay itself out again.
-        revalidate();
-        repaint();
+        overlayShown = shown;
+        overlayToggle.setIcon(new StateMarkIcon(OVERLAY_MARK_SIZE, shown));
+        overlayToggle.setText(shown ? "Hide on-screen overlay" : "Show on-screen overlay");
+        // The outline repeats the icon's colour, so the state reads at a glance
+        // even before the small mark is noticed.
+        overlayToggle.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(shown ? StateMarkIcon.ON_COLOR : StateMarkIcon.OFF_COLOR),
+            BorderFactory.createEmptyBorder(6, 10, 6, 10)));
     }
 
     /**
@@ -325,7 +363,7 @@ class GokIrlBankedXpPanel extends JPanel
                 on++;
             }
         }
-        trackingSummary.setText(on == total
+        trackingSection.setSummary(on == total
             ? "All " + total + " skills on"
             : on + " of " + total + " skills on");
 
@@ -366,16 +404,23 @@ class GokIrlBankedXpPanel extends JPanel
      * somewhere the sidebar cannot show, and testers reliably failed to find
      * them. Naming the exact route, and the exact section headings to look for,
      * is the whole of what this note is for.</p>
+     *
+     * <p>Closed by default like the other set-once sections, but its header is
+     * always on screen and says what the hidden settings are, so the signpost
+     * itself never folds away.</p>
      */
-    private JPanel buildSettingsPointer()
+    private CollapsibleSection buildSettingsPointer()
     {
-        JPanel card = IrlXpUi.card(new BorderLayout(0, 4));
-        card.add(IrlXpUi.mutedLabel("Milestones & warnings"), BorderLayout.NORTH);
-        card.add(IrlXpUi.wrappingNote(
-            "Configuration (the wrench) > IRL XP: choose \"Overlay and milestone popups\" "
-                + "for occasional XP and level-up reminders, even with the overlay hidden. "
-                + "Chat and screen-flash warnings have their own sections below it.", 4), BorderLayout.CENTER);
-        return card;
+        CollapsibleSection section = new CollapsibleSection(
+            "More settings",
+            "Where to find the milestone popup and warning settings.",
+            IrlXpUi.wrappingNote(
+                "Configuration (the wrench) > IRL XP: choose \"Overlay and milestone popups\" "
+                    + "for occasional XP and level-up reminders, even with the overlay hidden. "
+                    + "Chat and screen-flash warnings have their own sections below it.", 4),
+            false);
+        section.setSummary("Alerts and popups");
+        return section;
     }
 
     /**
@@ -494,33 +539,30 @@ class GokIrlBankedXpPanel extends JPanel
         gc.weightx = 1.0;
         gc.gridwidth = GridBagConstraints.REMAINDER;
 
-        removeForm.add(IrlXpUi.sectionTitle("Correct a mistake"), gc);
-
-        gc.gridy = 1;
         removeForm.add(IrlXpUi.wrappingNote(
             "Banked to the wrong skill, or typed too much? Take it back out here.", 2), gc);
 
-        gc.gridy = 2;
+        gc.gridy = 1;
         JLabel skillLabel = new JLabel("Skill");
         skillLabel.setForeground(IrlXpUi.MUTED_TEXT);
         removeForm.add(skillLabel, gc);
 
-        gc.gridy = 3;
+        gc.gridy = 2;
         removeSkillSelector.setPreferredSize(new Dimension(1, 32));
         removeSkillSelector.setRenderer(IrlXpUi.skillNameRenderer());
         removeSkillSelector.addActionListener(e -> refreshRemoveBalanceLabel());
         IrlXpUi.styleField(removeSkillSelector);
         removeForm.add(removeSkillSelector, gc);
 
-        gc.gridy = 4;
+        gc.gridy = 3;
         removeForm.add(removeBalanceLabel, gc);
 
-        gc.gridy = 5;
+        gc.gridy = 4;
         JLabel amountLabel = new JLabel("XP to remove");
         amountLabel.setForeground(IrlXpUi.MUTED_TEXT);
         removeForm.add(amountLabel, gc);
 
-        gc.gridy = 6;
+        gc.gridy = 5;
         removeXpField.setToolTipText("Enter a positive whole number, no larger than the banked amount");
         removeXpField.setCaretColor(IrlXpUi.TEXT);
         removeXpField.setPreferredSize(new Dimension(1, 36));
@@ -529,7 +571,7 @@ class GokIrlBankedXpPanel extends JPanel
         removeXpField.addMouseListener(new FocusOnClick(removeXpField));
         removeForm.add(removeXpField, gc);
 
-        gc.gridy = 7;
+        gc.gridy = 6;
         gc.insets = new Insets(8, 0, 0, 0);
         IrlXpUi.styleDangerButton(removeButton);
         removeButton.setFont(removeButton.getFont().deriveFont(Font.BOLD));
@@ -543,8 +585,9 @@ class GokIrlBankedXpPanel extends JPanel
     {
         SwingUtilities.invokeLater(() -> {
             // ConfigChanged and profile switches refresh the same snapshot path.
-            // setSelected does not fire our ActionListener, so this cannot write back.
-            showOverlay.setSelected(plugin.isOverlayShown());
+            // Redrawing the toggle does not fire its ActionListener, so this
+            // cannot write back.
+            renderOverlayToggle(plugin.isOverlayShown());
             skillListModel.clear();
             // Before the previews below: they read the deposit drop-down, which
             // this rebuilds when a skill has been switched on or off.
@@ -556,12 +599,13 @@ class GokIrlBankedXpPanel extends JPanel
 
             if (snapshot == null || !snapshot.hasData())
             {
-                totalXpLabel.setText("0 XP");
-                skillListModel.addElement("No banked XP yet — add your first chunk above.");
+                balanceSection.setSummary("0 XP");
+                skillListModel.addElement("No banked XP yet.");
+                fitBalanceListToRows();
                 return;
             }
 
-            totalXpLabel.setText(QuantityFormatter.formatNumber(snapshot.getTotalXp()) + " XP");
+            balanceSection.setSummary(QuantityFormatter.formatNumber(snapshot.getTotalXp()) + " XP");
 
             for (GokIrlBankedXpPlugin.BankedSkill entry : snapshot.getSkills())
             {
@@ -585,7 +629,30 @@ class GokIrlBankedXpPanel extends JPanel
                 );
                 skillListModel.addElement(line);
             }
+            fitBalanceListToRows();
         });
+    }
+
+    /**
+     * Makes the balance list exactly as tall as the rows it holds, up to
+     * {@link #MAX_BALANCE_ROWS}, after which it scrolls on its own.
+     *
+     * <p>The list used to reserve ten rows whatever it held, so a player with
+     * two skills banked scrolled past eight empty rows to reach the settings
+     * below. Must run on the EDT.</p>
+     */
+    private void fitBalanceListToRows()
+    {
+        int rows = Math.min(Math.max(skillListModel.size(), 1), MAX_BALANCE_ROWS);
+        if (rows == skillList.getVisibleRowCount())
+        {
+            return;
+        }
+        skillList.setVisibleRowCount(rows);
+        // The list's own scroll pane is a validation root, so the change in its
+        // preferred height reaches the sidebar only if this panel asks for it.
+        revalidate();
+        repaint();
     }
 
     /**

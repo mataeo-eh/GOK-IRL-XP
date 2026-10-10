@@ -10,7 +10,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.times;
 
 import com.gokirlbankedxp.service.TestMultipliers;
+import com.gokirlbankedxp.ui.CollapsibleSection;
 import com.gokirlbankedxp.ui.SkillTrackingGrid;
+import com.gokirlbankedxp.ui.StateMarkIcon;
 import java.awt.Component;
 import java.awt.Container;
 import java.util.ArrayList;
@@ -19,7 +21,6 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
-import javax.swing.JCheckBox;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import net.runelite.api.Skill;
@@ -29,7 +30,22 @@ import org.junit.jupiter.api.Test;
 class GokIrlBankedXpPanelTest
 {
     @Test
-    void sidebarCheckboxEditsVisibilityAndFollowsExternalSettings() throws Exception
+    void constructionDoesNotReadAnUninjectedPlugin() throws Exception
+    {
+        // Reproduce Guice's construction phase with a real plugin whose fields
+        // have not been injected. A mock hides premature service/config reads.
+        GokIrlBankedXpPlugin plugin = new GokIrlBankedXpPlugin();
+        AtomicReference<GokIrlBankedXpPanel> reference = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> reference.set(new GokIrlBankedXpPanel(
+            plugin, new TestMultipliers().multiplierManager, new SkillIconManager())));
+        SwingUtilities.invokeAndWait(() -> {
+            assertNotNull(reference.get());
+            assertEquals(0, findComboBoxes(reference.get()).get(0).getItemCount());
+        });
+    }
+
+    @Test
+    void overlayToggleEditsVisibilityAndFollowsExternalSettings() throws Exception
     {
         GokIrlBankedXpPlugin plugin = mock(GokIrlBankedXpPlugin.class);
         when(plugin.getTrackableSkills()).thenReturn(new Skill[]{Skill.MINING});
@@ -37,20 +53,111 @@ class GokIrlBankedXpPanelTest
         AtomicReference<GokIrlBankedXpPanel> reference = new AtomicReference<>();
         SwingUtilities.invokeAndWait(() -> reference.set(new GokIrlBankedXpPanel(
             plugin, new TestMultipliers().multiplierManager, new SkillIconManager())));
-        java.lang.reflect.Field field = GokIrlBankedXpPanel.class.getDeclaredField("showOverlay");
+        // Startup publishes the first snapshot after injection and profile load.
+        reference.get().updateSnapshot(GokIrlBankedXpPlugin.BankedXpSnapshot.empty());
+        java.lang.reflect.Field field = GokIrlBankedXpPanel.class.getDeclaredField("overlayToggle");
         field.setAccessible(true);
-        JCheckBox checkbox = (JCheckBox) field.get(reference.get());
+        JButton toggle = (JButton) field.get(reference.get());
         SwingUtilities.invokeAndWait(() -> {
-            assertTrue(checkbox.isSelected());
-            checkbox.doClick();
-            assertFalse(checkbox.isSelected());
+            // Showing: the words offer to hide it, and the mark is the green tick.
+            assertEquals("Hide on-screen overlay", toggle.getText());
+            assertEquals(StateMarkIcon.ON_COLOR, markColor(toggle));
+            toggle.doClick();
+            // Hidden: the words offer to show it, and the mark is the red cross.
+            assertEquals("Show on-screen overlay", toggle.getText());
+            assertEquals(StateMarkIcon.OFF_COLOR, markColor(toggle));
         });
         verify(plugin).setOverlayShown(false);
         // An external configuration/profile refresh updates the UI without writing back.
         reference.get().updateSnapshot(GokIrlBankedXpPlugin.BankedXpSnapshot.empty());
-        SwingUtilities.invokeAndWait(() -> assertTrue(checkbox.isSelected()));
+        SwingUtilities.invokeAndWait(() -> assertEquals("Hide on-screen overlay", toggle.getText()));
         verify(plugin, times(1)).setOverlayShown(false);
         verify(plugin, times(0)).setOverlayShown(true);
+    }
+
+    /** Every section has a header that stays put and a body its button folds away. */
+    @Test
+    void everySectionCollapsesAndOnlyTheSetOnceOnesStartClosed() throws Exception
+    {
+        GokIrlBankedXpPlugin plugin = mock(GokIrlBankedXpPlugin.class);
+        when(plugin.getTrackableSkills()).thenReturn(new Skill[]{Skill.MINING});
+        AtomicReference<GokIrlBankedXpPanel> reference = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> reference.set(new GokIrlBankedXpPanel(
+            plugin, new TestMultipliers().multiplierManager, new SkillIconManager())));
+
+        SwingUtilities.invokeAndWait(() -> {
+            List<CollapsibleSection> sections = new ArrayList<>();
+            for (Component child : reference.get().getComponents())
+            {
+                if (child instanceof CollapsibleSection)
+                {
+                    sections.add((CollapsibleSection) child);
+                }
+            }
+            // Bank XP, Balance, Tracked skills, More settings.
+            assertEquals(4, sections.size());
+            assertTrue(sections.get(0).isOpen());
+            assertTrue(sections.get(1).isOpen());
+            assertFalse(sections.get(2).isOpen());
+            assertFalse(sections.get(3).isOpen());
+
+            for (CollapsibleSection section : sections)
+            {
+                boolean wasOpen = section.isOpen();
+                int heightBefore = section.getPreferredSize().height;
+                JButton button = findButton(section, wasOpen ? "Hide" : "Show");
+                assertNotNull(button);
+                button.doClick();
+                assertEquals(!wasOpen, section.isOpen());
+                // An open section is taller than the same section closed.
+                assertEquals(wasOpen, section.getPreferredSize().height < heightBefore);
+            }
+        });
+    }
+
+    /** The colour the toggle's state mark paints in, read from a rendering of the icon. */
+    private static java.awt.Color markColor(JButton toggle)
+    {
+        javax.swing.Icon icon = toggle.getIcon();
+        java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(
+            icon.getIconWidth() + 2, icon.getIconHeight() + 2, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+        java.awt.Graphics2D g = image.createGraphics();
+        icon.paintIcon(toggle, g, 1, 1);
+        g.dispose();
+        // Edge pixels are blended by antialiasing; a fully opaque pixel is in
+        // the body of a stroke and carries the mark's exact colour.
+        for (int y = 0; y < image.getHeight(); y++)
+        {
+            for (int x = 0; x < image.getWidth(); x++)
+            {
+                java.awt.Color pixel = new java.awt.Color(image.getRGB(x, y), true);
+                if (pixel.getAlpha() == 255)
+                {
+                    return pixel;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static JButton findButton(Container container, String text)
+    {
+        for (Component child : container.getComponents())
+        {
+            if (child instanceof JButton && text.equals(((JButton) child).getText()))
+            {
+                return (JButton) child;
+            }
+            if (child instanceof Container)
+            {
+                JButton nested = findButton((Container) child, text);
+                if (nested != null)
+                {
+                    return nested;
+                }
+            }
+        }
+        return null;
     }
     @Test
     void parsesPositiveWholeNumberXp()
@@ -199,6 +306,8 @@ class GokIrlBankedXpPanelTest
 
         AtomicReference<GokIrlBankedXpPanel> panelReference = new AtomicReference<>();
         SwingUtilities.invokeAndWait(() -> panelReference.set(new GokIrlBankedXpPanel(plugin, new TestMultipliers().multiplierManager, new SkillIconManager())));
+        // Saved tracking choices are applied by startup's first snapshot.
+        panelReference.get().updateSnapshot(GokIrlBankedXpPlugin.BankedXpSnapshot.empty());
 
         AtomicReference<JComboBox<?>> deposit = new AtomicReference<>();
         SwingUtilities.invokeAndWait(() -> deposit.set(findComboBoxes(panelReference.get()).get(0)));
@@ -222,6 +331,7 @@ class GokIrlBankedXpPanelTest
 
         AtomicReference<GokIrlBankedXpPanel> panelReference = new AtomicReference<>();
         SwingUtilities.invokeAndWait(() -> panelReference.set(new GokIrlBankedXpPanel(plugin, new TestMultipliers().multiplierManager, new SkillIconManager())));
+        panelReference.get().updateSnapshot(GokIrlBankedXpPlugin.BankedXpSnapshot.empty());
 
         SwingUtilities.invokeAndWait(() -> {
             SkillTrackingGrid grid = findGrid(panelReference.get());

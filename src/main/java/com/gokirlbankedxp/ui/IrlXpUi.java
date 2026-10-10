@@ -2,6 +2,7 @@ package com.gokirlbankedxp.ui;
 
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Container;
 import java.awt.Cursor;
 import java.awt.Font;
 import java.text.NumberFormat;
@@ -17,9 +18,11 @@ import javax.swing.JFormattedTextField;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
+import javax.swing.JScrollBar;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.ListCellRenderer;
+import javax.swing.SwingUtilities;
 import javax.swing.border.Border;
 import javax.swing.border.CompoundBorder;
 import javax.swing.text.NumberFormatter;
@@ -47,6 +50,17 @@ public final class IrlXpUi
     public static final Color SUCCESS = new Color(0x66B88A);
     public static final Color DANGER = new Color(0xD06B68);
     public static final Color SELECTION = new Color(0x4B3B20);
+
+    /**
+     * How many pixels one wheel "unit" scrolls the sidebar.
+     *
+     * <p>Swing's default for a scroll pane whose contents are an ordinary panel
+     * is 1 pixel per unit, which is three pixels per notch of a typical mouse
+     * wheel — far too slow for a sidebar several screens tall. The operating
+     * system already reports more units for a faster spin or swipe, so a larger
+     * unit gives a speed that still follows how hard the user scrolls.</p>
+     */
+    public static final int SCROLL_UNIT = 16;
 
     private IrlXpUi()
     {
@@ -133,6 +147,51 @@ public final class IrlXpUi
         list.setFixedCellHeight(36);
         scrollPane.setBorder(BorderFactory.createLineBorder(BORDER));
         scrollPane.getViewport().setBackground(INPUT_BACKGROUND);
+        // No unit increment is set here: a JList already scrolls one whole row
+        // per wheel unit, which is faster than any fixed pixel step.
+        handOffWheelAtEdges(scrollPane);
+    }
+
+    /**
+     * Lets the mouse wheel keep scrolling the sidebar when the pointer is over a
+     * list that has nothing left to scroll.
+     *
+     * <p>A {@link JScrollPane} always listens for the wheel, and AWT delivers a
+     * wheel event only to the nearest component that listens for it. So a list
+     * embedded in the sidebar swallows every wheel event over it, including the
+     * ones it cannot use: when it is short enough to need no scroll bar, or is
+     * already at its top or bottom. The sidebar then appears to stop scrolling
+     * whenever the pointer crosses a list.</p>
+     *
+     * <p>This passes the events the list cannot use to its parent, where AWT's
+     * normal search for a wheel-listening ancestor finds the sidebar's own scroll
+     * pane. Events the list can use are left alone, so its own scrolling is
+     * unchanged. In a dialog, where no ancestor scrolls, the hand-off does nothing.</p>
+     */
+    public static void handOffWheelAtEdges(JScrollPane scrollPane)
+    {
+        scrollPane.addMouseWheelListener(event -> {
+            // getPreciseWheelRotation() is negative when scrolling up and positive
+            // when scrolling down. It is used rather than getWheelRotation()
+            // because a trackpad reports fractions that the whole-number
+            // accessor rounds to zero.
+            double rotation = event.getPreciseWheelRotation();
+            if (rotation == 0.0)
+            {
+                return;
+            }
+
+            JScrollBar bar = scrollPane.getVerticalScrollBar();
+            boolean canScroll = bar.isVisible() && (rotation < 0
+                ? bar.getValue() > bar.getMinimum()
+                : bar.getValue() + bar.getVisibleAmount() < bar.getMaximum());
+            Container parent = scrollPane.getParent();
+            if (canScroll || parent == null)
+            {
+                return;
+            }
+            parent.dispatchEvent(SwingUtilities.convertMouseEvent(scrollPane, event, parent));
+        });
     }
 
     /**

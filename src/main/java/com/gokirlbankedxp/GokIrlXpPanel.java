@@ -7,9 +7,11 @@ import com.gokirlbankedxp.ui.XpMultipliersPanel;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Color;
+import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.GridLayout;
+import java.awt.Insets;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import javax.swing.BorderFactory;
@@ -47,7 +49,34 @@ class GokIrlXpPanel extends PluginPanel
     private final XpMultipliersPanel multipliersPanel;
     private final BugReportController bugReports;
     private final CardLayout contentLayout = new CardLayout();
-    private final JPanel content = new JPanel(contentLayout);
+    /**
+     * Holds the three tabs, one visible at a time.
+     *
+     * <p>{@link CardLayout} reports the size of its <em>largest</em> card, shown
+     * or not, so on its own the sidebar would scroll as far as the tallest tab
+     * needs whichever tab was open, and folding a section away would shorten
+     * nothing. The preferred height is therefore taken from the visible tab
+     * alone.</p>
+     */
+    private final JPanel content = new JPanel(contentLayout)
+    {
+        @Override
+        public Dimension getPreferredSize()
+        {
+            Dimension size = super.getPreferredSize();
+            for (Component tab : getComponents())
+            {
+                // CardLayout keeps exactly one of its cards visible.
+                if (tab.isVisible())
+                {
+                    Insets insets = getInsets();
+                    size.height = tab.getPreferredSize().height + insets.top + insets.bottom;
+                    break;
+                }
+            }
+            return size;
+        }
+    };
     private final JLabel sectionDescription = IrlXpUi.mutedLabel("Bank real-world XP.");
     private final JButton xpButton = new JButton("BANKED XP");
     private final JButton actionsButton = new JButton("ACTIONS");
@@ -68,6 +97,12 @@ class GokIrlXpPanel extends PluginPanel
         setLayout(new BorderLayout());
         setBackground(IrlXpUi.BACKGROUND);
         setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
+
+        // PluginPanel's no-argument constructor wraps this panel in its own
+        // JScrollPane and exposes it through getScrollPane(). RuneLite leaves
+        // that pane on Swing's default of one pixel per wheel unit, which made
+        // the sidebar crawl; see IrlXpUi.SCROLL_UNIT.
+        getScrollPane().getVerticalScrollBar().setUnitIncrement(IrlXpUi.SCROLL_UNIT);
 
         add(buildHeader(), BorderLayout.NORTH);
 
@@ -156,6 +191,9 @@ class GokIrlXpPanel extends PluginPanel
     private void showSection(String card)
     {
         contentLayout.show(content, card);
+        // Each tab has its own height, so the sidebar's scroll range has to be
+        // worked out again for the tab now showing.
+        content.revalidate();
 
         // The description under the title always names what the visible tab does,
         // so the sidebar explains itself without the user pressing anything.
