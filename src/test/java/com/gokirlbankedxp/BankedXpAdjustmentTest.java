@@ -16,6 +16,7 @@ import static org.mockito.Mockito.when;
 
 import com.gokirlbankedxp.service.BankedXpStore;
 import com.gokirlbankedxp.service.DepletionForecaster;
+import com.gokirlbankedxp.service.SkillTrackingManager;
 import com.gokirlbankedxp.service.TestMultipliers;
 import com.google.gson.Gson;
 import java.lang.reflect.Field;
@@ -134,6 +135,104 @@ class BankedXpAdjustmentTest
         assertTrue(restarted.isOverlayShown());
         assertTrue(restarted.getMilestoneLines().isEmpty());
     }
+    /** Switching a skill off freezes it: in-game XP is no longer charged against the bank. */
+    @Test
+    void anUntrackedSkillIsNotChargedForInGameXp()
+    {
+        Fixture fixture = new Fixture();
+        fixture.plugin.addManualXp(Skill.MINING, 1_000L);
+        fixture.gainXp(Skill.MINING, 100, 1);
+        assertEquals(900L, fixture.plugin.getBankedXp(Skill.MINING));
+
+        fixture.plugin.setSkillTracked(Skill.MINING, false);
+        fixture.gainXp(Skill.MINING, 100, 5);
+
+        assertEquals(900L, fixture.plugin.getBankedXp(Skill.MINING));
+        assertEquals("MINING:900", fixture.storedXp());
+    }
+
+    /** With nothing banked, a tracked skill goes into debt; an untracked one must not. */
+    @Test
+    void anUntrackedSkillWithNothingBankedDoesNotGoIntoDebt()
+    {
+        Fixture fixture = new Fixture();
+        fixture.plugin.setSkillTracked(Skill.FISHING, false);
+
+        fixture.gainXp(Skill.FISHING, 250, 4);
+
+        assertEquals(0L, fixture.plugin.getBankedXp(Skill.FISHING));
+        assertEquals("", fixture.storedXp());
+    }
+
+    @Test
+    void anUntrackedSkillRefusesDepositsAndRemovals()
+    {
+        Fixture fixture = new Fixture();
+        fixture.plugin.addManualXp(Skill.COOKING, 500L);
+        fixture.plugin.setSkillTracked(Skill.COOKING, false);
+
+        assertEquals(0L, fixture.plugin.addManualXp(Skill.COOKING, 300L));
+        // Timers and logged sessions come in through this door.
+        assertEquals(0L, fixture.plugin.addActionXp(Skill.COOKING, 300L));
+        assertEquals(0L, fixture.plugin.removeManualXp(Skill.COOKING, 200L));
+        assertEquals(500L, fixture.plugin.getBankedXp(Skill.COOKING));
+    }
+
+    /** The balance is kept but hidden, and does not count towards the total either. */
+    @Test
+    void anUntrackedSkillIsLeftOutOfTheSnapshotButKeepsItsBalance()
+    {
+        Fixture fixture = new Fixture();
+        fixture.plugin.addManualXp(Skill.COOKING, 500L);
+        fixture.plugin.addManualXp(Skill.AGILITY, 200L);
+
+        fixture.plugin.setSkillTracked(Skill.COOKING, false);
+
+        GokIrlBankedXpPlugin.BankedXpSnapshot hidden = fixture.plugin.getCurrentSnapshot();
+        assertEquals(200L, hidden.getTotalXp());
+        assertEquals(1, hidden.getSkills().size());
+        assertEquals(Skill.AGILITY, hidden.getSkills().get(0).getSkill());
+
+        fixture.plugin.setSkillTracked(Skill.COOKING, true);
+
+        GokIrlBankedXpPlugin.BankedXpSnapshot shown = fixture.plugin.getCurrentSnapshot();
+        assertEquals(700L, shown.getTotalXp());
+        assertEquals(2, shown.getSkills().size());
+    }
+
+    /**
+     * XP earned while a skill was off is never charged. Turning it back on
+     * resumes from the frozen balance, and only later drops count.
+     */
+    @Test
+    void turningASkillBackOnDoesNotChargeTheXpEarnedWhileItWasOff()
+    {
+        Fixture fixture = new Fixture();
+        fixture.plugin.addManualXp(Skill.MINING, 1_000L);
+        fixture.gainXp(Skill.MINING, 100, 1);
+
+        fixture.plugin.setSkillTracked(Skill.MINING, false);
+        fixture.gainXp(Skill.MINING, 100, 5);
+        fixture.plugin.setSkillTracked(Skill.MINING, true);
+        assertEquals(900L, fixture.plugin.getBankedXp(Skill.MINING));
+
+        fixture.gainXp(Skill.MINING, 100, 1);
+        assertEquals(800L, fixture.plugin.getBankedXp(Skill.MINING));
+    }
+
+    @Test
+    void anUntrackedSkillNeverFiresTheDepletionWarning()
+    {
+        Fixture fixture = new Fixture();
+        fixture.plugin.addManualXp(Skill.MINING, 300L);
+        fixture.plugin.setSkillTracked(Skill.MINING, false);
+
+        // Tracked, these drops would cross the five-action warning window.
+        fixture.gainXp(Skill.MINING, 50, 5);
+
+        verify(fixture.notifier, never()).notify(any(Notification.class), anyString());
+    }
+
     @Test
     void removingXpReducesTheBalance()
     {
@@ -528,6 +627,7 @@ class BankedXpAdjustmentTest
             // figures it deposits. XpMultiplierTest covers the scaled path.
             TestMultipliers multipliers = new TestMultipliers();
             set("skillLevelTracker", multipliers.levelTracker);
+            set("skillTrackingManager", new SkillTrackingManager(inMemoryConfigManager(stored), new Gson()));
             set("xpMultiplierManager", multipliers.multiplierManager);
         }
 

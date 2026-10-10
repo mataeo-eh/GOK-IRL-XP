@@ -18,6 +18,7 @@ Turn your real-life effort into RuneScape progress. Bank XP for any skill by log
 - **Log completed work:** Enter how much you did in one go and how many times you repeated it; the plugin does the arithmetic and banks the XP.
 - **Real-time timers:** Run multiple timers at once; pause, resume, or stop them anytime.
 - **Level multipliers:** Set your own level thresholds per skill so banked XP scales as you level. You choose how many thresholds, what level each starts at, and what it multiplies by.
+- **Choose which skills count:** Switch tracking off for any skill from a grid laid out like the in-game skills tab. A skill that is off is frozen: hidden, never charged, never banked into, and its balance is kept for when you turn it back on.
 - **Overlay summaries:** View banked XP totals and active timers on-screen, in an overlay you can drag to any size.
 - **Depletion warning:** Flashes the screen red when a skill is a few more actions away from running out.
 - **Auto-save:** Actions, timers, thresholds, and banked XP persist between RuneLite sessions.
@@ -87,6 +88,7 @@ Every tab is a button under the **IRL XP** title in the sidebar, and the line un
 | Turn all level multipliers on/off | RuneLite Configuration (wrench) → **IRL XP** → *Level multipliers* |
 | Overlay size and position | Drag it in-game with RuneLite's overlay drag key (**ALT** by default) |
 | Show/hide the regular overlay | Sidebar → **BANKED XP** → **Show on-screen overlay**, or IRL XP configuration |
+| Which skills are tracked | Sidebar → **BANKED XP** → **Tracked skills** → **Show** |
 | Milestone popups | RuneLite Configuration (wrench) → **IRL XP** → *Overlay and milestone popups* |
 
 The RuneLite settings panel groups the plugin's options into four named sections, and each section says in plain language what the whole group controls. The **BANKED XP** tab carries a permanent note naming that route, because a plugin cannot open RuneLite's own settings panel for you.
@@ -145,6 +147,17 @@ Banked XP drains one for one as you gain XP in-game — and the game does not st
 - Neither warning fires for a debt. The low-XP chat line and the red flash are about a balance that is about to run out, not one that already has.
 
 This is what keeps the bank honest: every XP your character gains is matched by real-world effort sooner or later, whether you banked it beforehand or owe it afterwards.
+
+### Tracked Skills
+Every skill is tracked by default. To leave some out — skills you do not want tied to real-world effort — open the **BANKED XP** tab, find **Tracked skills** near the bottom and click **Show**. The grid is laid out like the in-game skills tab; click a skill to switch it off or back on. A tracked skill shows a green tick, and one that is off is greyed out with a red cross.
+
+While a skill is off:
+- XP you gain in it in-game is not charged against the bank and cannot put it into debt.
+- It is hidden from the sidebar balance list and the overlay, and left out of the total.
+- Nothing can be banked into it or removed from it. It disappears from the **Bank a chunk** skill list, and timers or logged work that award it bank nothing for that skill (their other skills are unaffected).
+- Whatever it had banked, or owed, is kept exactly as it was.
+
+Turning the skill back on picks up from that same balance. XP earned while it was off is never charged afterwards. The choice is saved with your RuneLite configuration profile.
 
 ### Level Multipliers
 Bank more — or less — XP as your in-game levels climb. Each skill has its own ladder of thresholds, set on the **LEVEL MULTIPLIERS** tab, and skills you never touch are unaffected.

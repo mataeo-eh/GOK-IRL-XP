@@ -7,6 +7,7 @@ import com.gokirlbankedxp.service.BankedXpMilestones;
 import com.gokirlbankedxp.service.DepletionForecaster;
 import com.gokirlbankedxp.service.IrlActionManager;
 import com.gokirlbankedxp.service.SkillLevelTracker;
+import com.gokirlbankedxp.service.SkillTrackingManager;
 import com.gokirlbankedxp.service.TimerManager;
 import com.gokirlbankedxp.service.XpMultiplierManager;
 import java.awt.Color;
@@ -156,6 +157,13 @@ public class GokIrlBankedXpPlugin extends Plugin
     @Inject
     private XpMultiplierManager xpMultiplierManager;
 
+    /**
+     * Which skills the player has switched off. Consulted at every point a
+     * balance could move or be shown; see {@link #setSkillTracked}.
+     */
+    @Inject
+    private SkillTrackingManager skillTrackingManager;
+
     @Inject
     private Notifier notifier;
 
@@ -223,6 +231,7 @@ public class GokIrlBankedXpPlugin extends Plugin
         // at all, and an unloaded manager would quietly bank everything at 1.00x.
         skillLevelTracker.load();
         xpMultiplierManager.load();
+        skillTrackingManager.load();
         // startUp() runs on the client thread, so every Swing mutation below has
         // to be handed to the EDT rather than performed inline.
         SwingUtilities.invokeLater(panel::refreshActions);
@@ -315,6 +324,15 @@ public class GokIrlBankedXpPlugin extends Plugin
             int delta = newXp - previous;
             if (delta <= 0)
             {
+                return;
+            }
+
+            if (!skillTrackingManager.isTracked(skill))
+            {
+                // Switched off in the sidebar: the drop is not charged, warned
+                // about, or fed to the forecaster. The baseline above was still
+                // moved forward, which is what keeps XP earned while a skill is
+                // off from being charged in one lump when it is turned back on.
                 return;
             }
 
@@ -518,6 +536,15 @@ public class GokIrlBankedXpPlugin extends Plugin
             // the next XP drop happened to refresh them.
             needsRefresh = true;
         }
+        else if (SkillTrackingManager.CONFIG_KEY.equals(event.getKey()))
+        {
+            // Covers a value this plugin did not write, such as a profile sync.
+            // The echo of the plugin's own write lands here too and re-reads the
+            // value it just saved, which is harmless: the result is identical.
+            skillTrackingManager.load();
+            milestones.clear();
+            needsRefresh = true;
+        }
         else if ("depletionWarningActions".equals(event.getKey()))
         {
             // A new window means a new prediction, so any standing warning is
@@ -558,6 +585,7 @@ public class GokIrlBankedXpPlugin extends Plugin
             irlActionManager.loadActions();
             skillLevelTracker.load();
             xpMultiplierManager.load();
+            skillTrackingManager.load();
             loadStoredXp();
             depletionForecaster.clear();
         });
@@ -602,14 +630,25 @@ public class GokIrlBankedXpPlugin extends Plugin
      * earned in-game ahead of the bank is still paid for with real-world effort,
      * just after the fact.</p>
      *
+     * <p>A skill switched off in the sidebar accepts nothing, from any route: its
+     * balance is frozen until it is turned back on. Refusing here rather than in
+     * each caller is what makes that true for timers and logged sessions as well
+     * as the deposit form.</p>
+     *
      * @param amount the base XP earned, before any multiplier
      * @return how much was actually credited after the multiplier, which is 0 when
-     *     the skill's current tier multiplies by zero. This is the figure that
-     *     moved the balance, whether it paid down a debt or added to the bank.
+     *     the skill's current tier multiplies by zero or the skill is switched
+     *     off. This is the figure that moved the balance, whether it paid down a
+     *     debt or added to the bank.
      */
     long addManualXp(Skill skill, long amount)
     {
         if (!isProfileCurrent() || skill == null || amount <= 0)
+        {
+            return 0L;
+        }
+
+        if (!skillTrackingManager.isTracked(skill))
         {
             return 0L;
         }
@@ -654,11 +693,15 @@ public class GokIrlBankedXpPlugin extends Plugin
      * sample handed to {@link DepletionForecaster} — an edit the user made in the
      * sidebar says nothing about what an in-game action costs.</p>
      *
+     * <p>A skill switched off in the sidebar is frozen in both directions, so it
+     * refuses removals just as it refuses deposits.</p>
+     *
      * @return how much was actually removed; 0 when the skill has no banked XP
+     *     or is switched off
      */
     long removeManualXp(Skill skill, long amount)
     {
-        if (skill == null || amount <= 0)
+        if (skill == null || amount <= 0 || !skillTrackingManager.isTracked(skill))
         {
             return 0L;
         }
@@ -725,6 +768,48 @@ public class GokIrlBankedXpPlugin extends Plugin
     Skill[] getTrackableSkills()
     {
         return TRACKABLE_SKILLS.clone();
+    }
+
+    /** The skills switched off in the sidebar's Tracked skills grid. Empty by default. */
+    Set<Skill> getUntrackedSkills()
+    {
+        return skillTrackingManager.getUntrackedSkills();
+    }
+
+    /**
+     * Switches tracking for one skill on or off, from the sidebar's skill grid.
+     *
+     * <p>Turning a skill off freezes it. Its balance stays in {@link #storedXp}
+     * and on disk exactly as it was, but from then on in-game XP is not charged
+     * against it ({@link #onStatChanged}), nothing can be deposited into or
+     * removed from it ({@link #addManualXp}, {@link #removeManualXp}), and it is
+     * left out of the snapshot the sidebar and overlay draw from
+     * ({@link #buildSnapshotLocked}). Turning it back on resumes from that same
+     * balance, with none of the XP earned in between charged against it.</p>
+     */
+    void setSkillTracked(Skill skill, boolean tracked)
+    {
+        if (!isProfileCurrent() || skill == null)
+        {
+            return;
+        }
+
+        if (!skillTrackingManager.setTracked(skill, tracked))
+        {
+            return;
+        }
+
+        synchronized (dataLock)
+        {
+            // Either direction is a fresh start for the warnings: a skill coming
+            // back on should be able to warn again, and one going off must not
+            // leave a stale flag behind for when it returns.
+            warnedSkills.remove(skill);
+            depletionWarnedSkills.remove(skill);
+        }
+        // A reminder already on screen may be about the skill just switched off.
+        milestones.clear();
+        rebuildSnapshotAndNotify();
     }
 
     /**
@@ -907,6 +992,13 @@ public class GokIrlBankedXpPlugin extends Plugin
             }
 
             Skill skill = entry.getKey();
+            if (!skillTrackingManager.isTracked(skill))
+            {
+                // Switched off: the balance is kept, but it is not shown and does
+                // not count towards the total until the skill is turned back on.
+                continue;
+            }
+
             // The total is the net position: debts count against banked XP, so a
             // user with 10,000 banked in one skill and 4,000 owed in another sees
             // 6,000, which is what their real-world effort has actually covered.

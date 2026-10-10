@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.gokirlbankedxp.service.BankedXpStore;
 import com.gokirlbankedxp.service.DepletionForecaster;
+import com.gokirlbankedxp.service.SkillTrackingManager;
 import com.gokirlbankedxp.service.TestMultipliers;
 import com.google.gson.Gson;
 import java.lang.reflect.Field;
@@ -198,6 +199,7 @@ class LevelMultiplierBankingTest
             set("client", mock(Client.class));
             set("panel", panel);
             set("skillLevelTracker", multipliers.levelTracker);
+            set("skillTrackingManager", new SkillTrackingManager(inMemoryConfigManager(stored), new Gson()));
             set("xpMultiplierManager", multipliers.multiplierManager);
         }
 

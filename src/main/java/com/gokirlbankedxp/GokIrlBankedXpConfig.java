@@ -306,6 +306,18 @@ public interface GokIrlBankedXpConfig extends Config
     }
 
     @ConfigItem(
+        keyName = "untrackedSkillsJson",
+        name = "Untracked skills",
+        description = "Serialized list of the skills switched off in the sidebar's Tracked skills grid. "
+            + "Empty means every skill is tracked.",
+        hidden = true
+    )
+    default String untrackedSkillsJson()
+    {
+        return "[]";
+    }
+
+    @ConfigItem(
         keyName = "observedSkillLevels",
         name = "Observed skill levels",
         description = "Serialized representation of the last skill levels seen in-game, "

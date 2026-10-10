@@ -10,16 +10,20 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.times;
 
 import com.gokirlbankedxp.service.TestMultipliers;
+import com.gokirlbankedxp.ui.SkillTrackingGrid;
 import java.awt.Component;
 import java.awt.Container;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
+import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JCheckBox;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import net.runelite.api.Skill;
+import net.runelite.client.game.SkillIconManager;
 import org.junit.jupiter.api.Test;
 
 class GokIrlBankedXpPanelTest
@@ -32,7 +36,7 @@ class GokIrlBankedXpPanelTest
         when(plugin.isOverlayShown()).thenReturn(true);
         AtomicReference<GokIrlBankedXpPanel> reference = new AtomicReference<>();
         SwingUtilities.invokeAndWait(() -> reference.set(new GokIrlBankedXpPanel(
-            plugin, new TestMultipliers().multiplierManager)));
+            plugin, new TestMultipliers().multiplierManager, new SkillIconManager())));
         java.lang.reflect.Field field = GokIrlBankedXpPanel.class.getDeclaredField("showOverlay");
         field.setAccessible(true);
         JCheckBox checkbox = (JCheckBox) field.get(reference.get());
@@ -88,7 +92,7 @@ class GokIrlBankedXpPanelTest
         AtomicReference<JTextField> fieldReference = new AtomicReference<>();
 
         SwingUtilities.invokeAndWait(() -> {
-            GokIrlBankedXpPanel panel = new GokIrlBankedXpPanel(plugin, new TestMultipliers().multiplierManager);
+            GokIrlBankedXpPanel panel = new GokIrlBankedXpPanel(plugin, new TestMultipliers().multiplierManager, new SkillIconManager());
             fieldReference.set(findTextField(panel));
         });
 
@@ -116,7 +120,7 @@ class GokIrlBankedXpPanelTest
         when(plugin.getBankedXp(Skill.COOKING)).thenReturn(500L);
 
         AtomicReference<GokIrlBankedXpPanel> panelReference = new AtomicReference<>();
-        SwingUtilities.invokeAndWait(() -> panelReference.set(new GokIrlBankedXpPanel(plugin, new TestMultipliers().multiplierManager)));
+        SwingUtilities.invokeAndWait(() -> panelReference.set(new GokIrlBankedXpPanel(plugin, new TestMultipliers().multiplierManager, new SkillIconManager())));
 
         // Only Cooking is banked; Agility has nothing.
         panelReference.get().updateSnapshot(new GokIrlBankedXpPlugin.BankedXpSnapshot(
@@ -146,7 +150,7 @@ class GokIrlBankedXpPanelTest
         when(plugin.getBankedXp(Skill.WOODCUTTING)).thenReturn(-5_000L);
 
         AtomicReference<GokIrlBankedXpPanel> panelReference = new AtomicReference<>();
-        SwingUtilities.invokeAndWait(() -> panelReference.set(new GokIrlBankedXpPanel(plugin, new TestMultipliers().multiplierManager)));
+        SwingUtilities.invokeAndWait(() -> panelReference.set(new GokIrlBankedXpPanel(plugin, new TestMultipliers().multiplierManager, new SkillIconManager())));
 
         // Cooking is banked; Woodcutting is owed after a quest reward.
         panelReference.get().updateSnapshot(new GokIrlBankedXpPlugin.BankedXpSnapshot(
@@ -172,7 +176,7 @@ class GokIrlBankedXpPanelTest
         when(plugin.getTrackableSkills()).thenReturn(new Skill[]{Skill.AGILITY});
 
         AtomicReference<GokIrlBankedXpPanel> panelReference = new AtomicReference<>();
-        SwingUtilities.invokeAndWait(() -> panelReference.set(new GokIrlBankedXpPanel(plugin, new TestMultipliers().multiplierManager)));
+        SwingUtilities.invokeAndWait(() -> panelReference.set(new GokIrlBankedXpPanel(plugin, new TestMultipliers().multiplierManager, new SkillIconManager())));
 
         panelReference.get().updateSnapshot(GokIrlBankedXpPlugin.BankedXpSnapshot.empty());
         SwingUtilities.invokeAndWait(() -> { });
@@ -183,6 +187,75 @@ class GokIrlBankedXpPanelTest
         JComboBox<?> removeSelector = combos.get().get(1);
         assertEquals(0, removeSelector.getItemCount());
         assertFalse(removeSelector.isEnabled());
+    }
+
+    /** A switched-off skill cannot be banked into, so the deposit form must not offer it. */
+    @Test
+    void depositOffersOnlyTrackedSkillsAndFollowsTheGrid() throws Exception
+    {
+        GokIrlBankedXpPlugin plugin = mock(GokIrlBankedXpPlugin.class);
+        when(plugin.getTrackableSkills()).thenReturn(new Skill[]{Skill.AGILITY, Skill.COOKING});
+        when(plugin.getUntrackedSkills()).thenReturn(Set.of(Skill.AGILITY));
+
+        AtomicReference<GokIrlBankedXpPanel> panelReference = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> panelReference.set(new GokIrlBankedXpPanel(plugin, new TestMultipliers().multiplierManager, new SkillIconManager())));
+
+        AtomicReference<JComboBox<?>> deposit = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> deposit.set(findComboBoxes(panelReference.get()).get(0)));
+        assertEquals(1, deposit.get().getItemCount());
+        assertEquals(Skill.COOKING, deposit.get().getItemAt(0));
+
+        // Turned back on in the grid: the next snapshot brings the skill back.
+        when(plugin.getUntrackedSkills()).thenReturn(Set.of());
+        panelReference.get().updateSnapshot(GokIrlBankedXpPlugin.BankedXpSnapshot.empty());
+        SwingUtilities.invokeAndWait(() -> { });
+        assertEquals(2, deposit.get().getItemCount());
+    }
+
+    /** The grid starts collapsed, and a tile click asks the plugin for the opposite state. */
+    @Test
+    void trackedSkillsSectionStartsClosedAndTilesToggleTracking() throws Exception
+    {
+        GokIrlBankedXpPlugin plugin = mock(GokIrlBankedXpPlugin.class);
+        when(plugin.getTrackableSkills()).thenReturn(new Skill[]{Skill.AGILITY, Skill.COOKING});
+        when(plugin.getUntrackedSkills()).thenReturn(Set.of(Skill.COOKING));
+
+        AtomicReference<GokIrlBankedXpPanel> panelReference = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> panelReference.set(new GokIrlBankedXpPanel(plugin, new TestMultipliers().multiplierManager, new SkillIconManager())));
+
+        SwingUtilities.invokeAndWait(() -> {
+            SkillTrackingGrid grid = findGrid(panelReference.get());
+            assertNotNull(grid);
+            assertFalse(grid.getParent().isVisible(), "the section must start collapsed");
+            assertEquals(2, grid.getSkillCount());
+
+            // Tiles are in the game's skills-tab order: Agility before Cooking.
+            ((JButton) grid.getComponent(0)).doClick();
+            ((JButton) grid.getComponent(1)).doClick();
+        });
+
+        verify(plugin).setSkillTracked(Skill.AGILITY, false);
+        verify(plugin).setSkillTracked(Skill.COOKING, true);
+    }
+
+    private static SkillTrackingGrid findGrid(Container container)
+    {
+        for (Component child : container.getComponents())
+        {
+            if (child instanceof SkillTrackingGrid)
+            {
+                return (SkillTrackingGrid) child;
+            }
+            if (child instanceof Container)
+            {
+                SkillTrackingGrid nested = findGrid((Container) child);
+                if (nested != null)
+                {
+                    return nested;
+                }
+            }
+        }
+        return null;
     }
 
     private static List<JComboBox<?>> findComboBoxes(Container container)

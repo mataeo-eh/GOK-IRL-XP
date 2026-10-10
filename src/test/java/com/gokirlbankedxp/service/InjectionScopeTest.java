@@ -82,6 +82,14 @@ class InjectionScopeTest
     }
 
     @Test
+    void trackedSkillChoiceIsSharedByEveryInjectionPoint()
+    {
+        assertNotNull(SkillTrackingManager.class.getAnnotation(Singleton.class),
+            "SkillTrackingManager must be @Singleton; it holds the switched-off skills in memory, and"
+                + " an unscoped second instance would never see the choice the plugin loaded.");
+    }
+
+    @Test
     void multipliersPanelIsTheUiEntryPointForTheMultiplierServices()
     {
         assertNotNull(XpMultipliersPanel.class.getAnnotation(Singleton.class),

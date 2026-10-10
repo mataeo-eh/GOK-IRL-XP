@@ -2,6 +2,7 @@ package com.gokirlbankedxp;
 
 import com.gokirlbankedxp.service.XpMultiplierManager;
 import com.gokirlbankedxp.ui.IrlXpUi;
+import com.gokirlbankedxp.ui.SkillTrackingGrid;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Component;
@@ -14,9 +15,11 @@ import java.awt.Insets;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.OptionalLong;
+import java.util.Set;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import javax.swing.BorderFactory;
@@ -38,6 +41,7 @@ import javax.swing.JTextField;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import net.runelite.api.Skill;
+import net.runelite.client.game.SkillIconManager;
 import net.runelite.client.util.QuantityFormatter;
 
 /**
@@ -85,8 +89,23 @@ class GokIrlBankedXpPanel extends JPanel
     private final JLabel totalXpLabel = new JLabel("0 XP");
     private final JCheckBox showOverlay = new JCheckBox("Show on-screen overlay");
 
+    /** The in-game-style grid of skill switches, hidden until its section is opened. */
+    private final SkillTrackingGrid trackingGrid;
+    private final JPanel trackingBody = new JPanel(new BorderLayout(0, 8));
+    private final JLabel trackingSummary = IrlXpUi.mutedLabel(" ");
+    private final JButton trackingToggle = new JButton("Show");
+    /**
+     * The untracked set the deposit drop-down was last built from, so it is only
+     * rebuilt when that set actually changes rather than on every XP drop.
+     * Null until the first build.
+     */
+    private Set<Skill> depositSelectorUntracked;
+
     @Inject
-    GokIrlBankedXpPanel(GokIrlBankedXpPlugin plugin, XpMultiplierManager multiplierManager)
+    GokIrlBankedXpPanel(
+        GokIrlBankedXpPlugin plugin,
+        XpMultiplierManager multiplierManager,
+        SkillIconManager skillIconManager)
     {
         this.plugin = plugin;
         this.multiplierManager = multiplierManager;
@@ -122,7 +141,7 @@ class GokIrlBankedXpPanel extends JPanel
         addForm.add(skillLabel, gc);
 
         gc.gridy = 3;
-        skillSelector = new JComboBox<>(plugin.getTrackableSkills());
+        skillSelector = new JComboBox<>();
         skillSelector.setPreferredSize(new Dimension(1, 32));
         skillSelector.setRenderer(IrlXpUi.skillNameRenderer());
         // A different skill can be on a different multiplier tier, so the
@@ -224,11 +243,118 @@ class GokIrlBankedXpPanel extends JPanel
         showOverlay.setToolTipText("Hide banked XP and timers on screen while all tracking continues. Configure milestone popups in IRL XP settings.");
         showOverlay.addActionListener(e -> plugin.setOverlayShown(showOverlay.isSelected()));
         displaySettings.add(showOverlay, BorderLayout.NORTH);
-        displaySettings.add(buildSettingsPointer(), BorderLayout.CENTER);
+        trackingGrid = new SkillTrackingGrid(
+            plugin.getTrackableSkills(), skillIconManager, plugin::setSkillTracked);
+        displaySettings.add(buildTrackedSkillsSection(), BorderLayout.CENTER);
+        displaySettings.add(buildSettingsPointer(), BorderLayout.SOUTH);
         add(displaySettings, BorderLayout.SOUTH);
 
         showMode(ADD_CARD);
+        refreshTrackedSkills();
         refreshDepositPreview();
+    }
+
+    /**
+     * The collapsible "Tracked skills" section.
+     *
+     * <p>Closed by default: choosing which skills count is something a player
+     * sets once, and a 24-tile grid left permanently open would push the balance
+     * list and the deposit form around for no benefit. The header stays visible
+     * while closed and says how many skills are on, so a player who has switched
+     * some off is not left wondering why a skill has vanished from the list.</p>
+     */
+    private JPanel buildTrackedSkillsSection()
+    {
+        JPanel card = IrlXpUi.card(new BorderLayout(0, 8));
+
+        JPanel header = new JPanel(new BorderLayout(8, 0));
+        header.setOpaque(false);
+        JPanel titles = new JPanel(new GridLayout(0, 1, 0, 1));
+        titles.setOpaque(false);
+        titles.add(IrlXpUi.sectionTitle("Tracked skills"));
+        titles.add(trackingSummary);
+        header.add(titles, BorderLayout.CENTER);
+
+        IrlXpUi.styleSecondaryButton(trackingToggle);
+        trackingToggle.setToolTipText("Choose which skills IRL XP tracks.");
+        trackingToggle.addActionListener(e -> setTrackingSectionOpen(!trackingBody.isVisible()));
+        header.add(trackingToggle, BorderLayout.EAST);
+        card.add(header, BorderLayout.NORTH);
+
+        trackingBody.setOpaque(false);
+        trackingBody.add(IrlXpUi.wrappingNote(
+            "Click a skill to turn its tracking off or on. A skill that is off is hidden, "
+                + "gains and loses nothing, and keeps the XP it had for when you turn it back on.", 4),
+            BorderLayout.NORTH);
+        trackingBody.add(trackingGrid, BorderLayout.CENTER);
+        card.add(trackingBody, BorderLayout.CENTER);
+
+        setTrackingSectionOpen(false);
+        return card;
+    }
+
+    private void setTrackingSectionOpen(boolean open)
+    {
+        trackingBody.setVisible(open);
+        trackingToggle.setText(open ? "Hide" : "Show");
+        // The section changes height, so the sidebar has to lay itself out again.
+        revalidate();
+        repaint();
+    }
+
+    /**
+     * Brings everything that depends on the tracked-skill choice in line with
+     * the plugin: the grid's tiles, the "N of M on" summary, and the deposit
+     * drop-down, which offers only skills that are switched on.
+     *
+     * <p>Must run on the EDT. The plugin is asked rather than a local copy kept,
+     * so the grid can never show a state the plugin did not accept.</p>
+     */
+    private void refreshTrackedSkills()
+    {
+        Set<Skill> untracked = plugin.getUntrackedSkills();
+
+        trackingGrid.setUntracked(untracked);
+
+        int total = trackingGrid.getSkillCount();
+        int on = 0;
+        for (Skill skill : plugin.getTrackableSkills())
+        {
+            if (!untracked.contains(skill))
+            {
+                on++;
+            }
+        }
+        trackingSummary.setText(on == total
+            ? "All " + total + " skills on"
+            : on + " of " + total + " skills on");
+
+        if (untracked.equals(depositSelectorUntracked))
+        {
+            return;
+        }
+        // Copied, because the comparison above has to be against the set as it
+        // was at this build, whatever the caller later does with its own.
+        depositSelectorUntracked = untracked.isEmpty()
+            ? EnumSet.noneOf(Skill.class)
+            : EnumSet.copyOf(untracked);
+
+        Skill previous = (Skill) skillSelector.getSelectedItem();
+        DefaultComboBoxModel<Skill> model = new DefaultComboBoxModel<>();
+        for (Skill skill : plugin.getTrackableSkills())
+        {
+            if (!untracked.contains(skill))
+            {
+                model.addElement(skill);
+            }
+        }
+        skillSelector.setModel(model);
+        // Keep the user's selection when it is still on offer; otherwise the new
+        // model's first entry is selected, or nothing when every skill is off.
+        if (previous != null && !untracked.contains(previous))
+        {
+            skillSelector.setSelectedItem(previous);
+        }
     }
 
     /**
@@ -420,6 +546,9 @@ class GokIrlBankedXpPanel extends JPanel
             // setSelected does not fire our ActionListener, so this cannot write back.
             showOverlay.setSelected(plugin.isOverlayShown());
             skillListModel.clear();
+            // Before the previews below: they read the deposit drop-down, which
+            // this rebuilds when a skill has been switched on or off.
+            refreshTrackedSkills();
             refreshRemovableSkills(snapshot);
             // A snapshot follows every XP change, and an XP change can be the
             // level-up that moves this skill onto a different multiplier tier.
@@ -535,6 +664,13 @@ class GokIrlBankedXpPanel extends JPanel
         Skill selectedSkill = (Skill) skillSelector.getSelectedItem();
         if (selectedSkill == null)
         {
+            // The drop-down only empties when every skill has been switched off.
+            JOptionPane.showMessageDialog(
+                this,
+                "Every skill is switched off. Turn one on under Tracked skills below to bank XP.",
+                "No skills tracked",
+                JOptionPane.INFORMATION_MESSAGE
+            );
             return;
         }
 

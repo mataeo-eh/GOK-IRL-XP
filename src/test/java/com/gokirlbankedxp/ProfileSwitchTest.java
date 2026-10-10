@@ -176,6 +176,7 @@ class ProfileSwitchTest
             inject(plugin, "config", config);
             inject(plugin, "irlActionManager", actions);
             inject(plugin, "skillLevelTracker", levels);
+            inject(plugin, "skillTrackingManager", new SkillTrackingManager(configManager, gson));
             inject(plugin, "xpMultiplierManager", multipliers);
             inject(plugin, "timerManager", timers);
             inject(plugin, "bankedXpStore", store);
